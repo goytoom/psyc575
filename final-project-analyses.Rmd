@@ -1,0 +1,254 @@
+---
+title: '575 Final Project: Data Analysis'
+author: "Lizzie, Suhaib, Emma"
+date: "`r Sys.Date()`"
+output:
+  bookdown::pdf_document2:
+    toc: yes
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+options(tinytex.verbose = TRUE)
+```
+
+# Load packages
+```{r load-pkg, message=FALSE}
+library(tidyverse)
+library(haven)
+library(ggplot2)
+library(here)
+library(jtools)
+library(lme4)
+library(lmerTest)
+library(glmmTMB)
+library(modelsummary)
+library(knitr)
+library(kableExtra)
+theme_set(jtools::theme_apa())
+```
+
+# Load Data
+## Import Data
+```{r data-import, message=FALSE}
+# Read in the data
+df.hatch <- read_sav(here("HATCH 09.29.21.sav"))
+```
+
+## Tidy Data
+```{r data-tidy, message=FALSE}
+# Subset Variables
+df.mlm <- df.hatch %>%
+  select(c(CoupID,                                # Couple ID
+           
+           # Couple Level                         ## COUPLE ##
+           DelMod, ModeofDeliverySpecific,        # Delivery Method
+           GesAgeWk,                              # Gestational age
+           Bb.sex,                                # Baby sex
+           
+           # Person Level                         ## PERSON ##
+           contains("pnAge"),                     # Parent age
+           contains("Ethn"),                      # Parent ethnicity
+           contains("Educ"),                      # Parent level of education
+           contains("peritot"),                   # BEQ (birth stress)
+           
+           # Time Level                           ## TIME ##
+           bage3pp.1, bage6pp, bage12pp.1,        # Baby age
+           contains("PSI_t"),                     # Parenting Stress
+              contains("PSIt"),
+              contains("PSI.t")
+           ))   
+
+# Rename Variables
+colnames(df.mlm) <- c("CoupID",
+                      
+                      # Couple Level
+                      "DelMeth", "DelMeth.Specific",
+                      "GestationAge",
+                      "BabySex",
+                      
+                      # Person Level
+                      "age.mom", "age.dad",
+                      "ethnicity.mom", "ethnicity.dad",
+                      "education.mom", "education.dad",
+                      "beq.mom", "beq.dad",
+                      
+                      # Time Level
+                      "BabyAge.3", "BabyAge.6", "BabyAge.12",
+                      "PSI.3.mom", "PSI.12.mom", "PSI.12.dad",
+                          "PSI.3.dad", "PSI.6.dad",
+                          "PSI.6.mom"
+                      )
+
+# Reorder PSI Variables
+df.mlm <- df.mlm %>%
+  relocate(c("PSI.3.mom", "PSI.3.dad",
+             "PSI.6.mom", "PSI.6.dad",
+             "PSI.12.mom", "PSI.12.dad"),
+           .after = BabyAge.12)
+
+```
+
+## Wide to Long 
+```{r wide-to-long}
+# Person-Level and Time-Level Variables
+df.long1 <- df.mlm %>%
+  # Parent-level variables
+  pivot_longer(
+    cols = age.mom:beq.dad,
+    names_to = c(".value", "parent"),
+    names_pattern = "(age|ethnicity|education|beq).(mom|dad)",
+    names_transform = list(parent = as.factor)
+  ) %>%
+  # Assign participant IDs
+  mutate(PersonID = seq(1:200)) %>%
+  # Time-level variables
+  pivot_longer(
+    cols = BabyAge.3:BabyAge.12,
+    names_to = c(".value", "time"),
+    names_pattern = "(BabyAge).(3|6|12)",
+    names_transform = list(time = as.integer)
+  ) %>%
+  # Remove PSI variables
+  select(-starts_with("PSI"))
+
+# PSI Variable
+df.long2 <- df.mlm %>%
+  pivot_longer(
+    cols = PSI.3.mom:PSI.12.dad,
+    names_to = c(".value", "time", "parent"),
+    names_pattern = "(PSI).(3|6|12).(mom|dad)",
+    names_transform = list(time = as.integer, parent = as.factor)
+  ) %>%
+  # Remove variables in `df.long1` that aren't identifying variables
+  select(c(CoupID, time, parent, PSI))
+
+
+# Combine Data Frames
+df.long <- left_join(df.long1, df.long2, by = c("CoupID", "parent", "time")) %>%
+  # Move identifying variable
+  relocate(c(PersonID, parent, time), .after = CoupID) %>%
+  # Remove funky formatting
+  mutate(beq = na_if(beq, -97.450))
+```
+
+
+# Density Plots
+```{r plot-density, message=FALSE}
+ggplot(data = df.long, aes(x = PSI)) +
+  geom_density() +
+  facet_grid(parent~time) +
+  labs(x = "Parenting Stress (PSI)", y = "")
+
+ggplot(data = df.long, aes(x = beq)) + 
+  geom_density() + 
+  facet_wrap(~parent) +
+  labs(x = "Birthing Stress (BEQ)", y = "")
+
+ggplot(data = na.omit(distinct(df.long, CoupID, .keep_all = T)), 
+       aes(x = as.factor(DelMeth), 
+           fill = as.factor(DelMeth.Specific))) + 
+  geom_bar(position = "stack", color = "black") + 
+  scale_x_discrete(labels = c("Vaginal", "C-Section")) + 
+  scale_fill_discrete(labels = c("Natural Vaginal", "Medicated Vaginal", "Unplanned C-Section", "Planned C-Section")) +
+  labs(x = "Delivery Method", y = "")
+```
+
+
+## Data Processing
+
+```{r, message=FALSE}
+#scaling and decomposing of variables
+df_scaled <- df.long %>% mutate(log_psi = scale(log(PSI))) %>%
+  group_by(CoupID) %>% mutate(beq_cm = mean(beq)) %>% ungroup() %>% mutate(beq_cmc = beq - beq_cm)
+```
+
+## Models
+
+### Model Equation:
+Nomenclature:
+j: Couples
+i: persons
+t: time intervals
+
+\begin{align}
+\label{eq:m2}
+psi_{tij} = \gamma_{000} + \gamma_{100} \cdot TIME_{tij} + \gamma_{010}\cdot beq^{cmc}_{ij} + u_{0i0} + \gamma_{001}\cdot beq^{cm}_{j} + \gamma_{002}\cdot DelMeth_j + \gamma_{003}\cdot DelMeth\cdot beq^{cm}_j + u_{00j} + e_{tij}
+\end{align}
+
+### Modelling
+```{r message=FALSE}
+m0 <- lmer(PSI ~ 1 + (time|CoupID), data=df_scaled)
+ranova(m0) #not significant!
+#random slope insignificant for Couples and does not converge for Persons
+```
+
+The random slope on the couple level is not significant, so it will not be included in the model.
+Note, that the model did not converge for person-level random slopes, which is why they have been excluded for now, however, they are planned to be included in future versions.
+
+```{r}
+m1 <- glmmTMB(PSI ~ time + beq_cmc  + DelMeth*beq_cm + (1|PersonID) + (1|CoupID), data = df_scaled)
+summary(m1) #robust se estimation (faster than brms)
+
+# m2 <- glmmTMB(PSI ~ time + beq_cmc  + DelMeth*beq_cm + age + parent + (1|PersonID) + (time|CoupID), data = df_scaled)
+# summary(m2) #robust se estimation (faster than brms)
+```
+
+```{r echo=F}
+#function to create table caption
+tn = local({
+  i = 0
+  function(x) {
+    # i <<- i + 1
+    i = "2.1" #manual numbering to adjust to documents style
+    paste('Table ', i, ': ', x, sep = '')
+    # The : before Table tells pandoc to wrap your caption in <caption></caption>
+  }
+})
+knit_hooks$set(tab.cap = function(before, options, envir) {
+  if(!before)
+    tn(options$tab.cap)
+})
+default_output_hook = knit_hooks$get("output")
+knit_hooks$set(output = function(x, options) {
+  if (is.null(options$tab.cap) == F)  
+    x
+  else
+    default_output_hook(x,options)
+})
+```
+
+```{r table1, tab.cap="Table shows the intercept, level-1 fixed effects (time), level-2 fixed effects (beq_cmc), level-3 fixed effects (beq_cm, delivery method & interaction), random intercept (variance of intercept) and measures of fit (e.g., RMSE).", message=FALSE}
+modelsummary(m1, group = group + term ~ model, title = "Model 1 Coefficient Summary") %>% kable_styling()
+```
+
+## Plots
+
+
+```{r figure1, fig.cap="Scatter plot with regression line and 95% confidence interval of parental stress over birth experience (cluster mean centered). Plot shows no significant relation between both variables.", warning=F, message=F}
+
+effect_plot(m1, pred = beq_cmc,interval = TRUE, plot.points = TRUE)
+
+# ggplot(data = df_scaled, aes(x = beq, y=PSI, group=CoupID))+
+#   geom_point()+
+#   geom_smooth(method = "lm", se = F, aes(colour = CoupID))+
+#   xlab("Birth experience")+ylab("Parental Stress")+
+#   theme(legend.position = "none")
+```
+
+
+## Interpretation
+
+We investigated the model described in equation \ref{eq:m2}. The model output in table \ref{tab:table1} shows the fixed effects as follows:
+For time (level 1) as 0.25 (SE=0.198), for birth experience (cmc, level 2) as -0.04 (SE=2.5), for birth experience (cm, level 3) as 1.8 (SE=3.5), for delivery method (level 3) as 28.5 (SE=25.2) and the interaction of delivery method and birth experience as -4.3 (SE=6.5). As such, none of the main effects were significant. The random intercept for the person-level was 10.9 and on the couple level 13. Figure @\ref{fig:figure1} emphasizes this by showing the connection between birth experience (cmc) and parental stress. The plot shows that there is no significant relation.
+
+These preliminary findings/analysis do not support our hypothesis that birth experience and delivery method relate to post partum parental stress. We will look further into our modelling to be sure that the findings are not caused by our model choices. It could be the case that previous research found relations between post partum depression and birth experience or delivery methods due to unsuitable models (e.g. OLS isntead of MLMs).
+
+
+ 
+
