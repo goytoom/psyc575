@@ -10,12 +10,8 @@ We find that ...
 
 # Data Used
 
-The following data was used in this project:
-(or describe that the data cannot be publicly shared!)
+The data from the Hormones Across the Transition to Childrearing (HATCH) study was used in this project. The HATCH study was conducted by Dr. Darby Saxbe and the NEST Lab at the University of Southern California. Because of the sensitivity of the data, the data set cannot be shared without IRB and PI approval. Please contact Elizabeth Aviv (eaviv@usc.edu) with questions. 
 
-* Data 1
-	* Description 1
-	* Description 2
 
 # Instructions
 
