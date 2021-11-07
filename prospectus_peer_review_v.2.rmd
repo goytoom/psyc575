@@ -3,12 +3,90 @@ title: "Final Project Prospectus"
 author: "Lizzie Aviv, Suhaib Abdhurahman, Emma Preston"
 date: "`r Sys.Date()`"
 output:
-  bookdown::pdf_document2:
+  bookdown::html_document2:
+    html_document:
     toc: yes
 ---
 
 # Background
+Do stressful birthing experiences and delivery method (i.e., cesarean vs. vaginal delivery) predict postpartum parenting stress in first-time mothers and fathers? Prior research (Sellery et al., poster, 2021) has shown that stressful birthing experiences significantly predict paternal postpartum depression. However, this research did not include a multilevel model and did not take into account mothers’ experiences or predict maternal stress/depression.
 
 # Data Structure
+The data used in this project come from the NEST lab's Hormones Across the Transition to Childrearing (HATCH) study, a longitudinal parenting dataset. The data is nested within couples and persons Each couple has one male and one female partner, and each partner was tested during the prenatal and perinatal (birth) periods, as well as at three time points during the postpartum period (3, 6, and 12 months' postpartum).
+
+The current study will focus specifically on the three postpartum time points, using data from the prenatal and perinatal periods only as level-2 and level-3 covariates. 
+
+``` {r network-graph, echo=FALSE}
+DiagrammeR::grViz("
+digraph a_nice_graph {
+
+# node definitions with substituted label text
+node [fontname = Helvetica shape = 'plaintext']
+a [label = 'Couple 1']
+b [label = 'Couple 2']
+c [label = 'Couple 3']
+
+a1 [label = 'Parent 1a']
+a2 [label = 'Parent 1b']
+b1 [label = 'Parent 2a']
+b2 [label = 'Parent 2b']
+c1 [label = 'Parent 3a']
+c2 [label = 'Parent 3b']
+
+a13 [label = '3pp']
+a16 [label = '6pp']
+a112 [label = '12pp']
+a23 [label = '3pp']
+a26 [label = '6pp']
+a212 [label = '12pp']
+b13 [label = '3pp']
+b16 [label = '6pp']
+b112 [label = '12pp']
+b23 [label = '3pp']
+b26 [label = '6pp']
+b212 [label = '12pp']
+c13 [label = '3pp']
+c16 [label = '6pp']
+c112 [label = '12pp']
+c23 [label = '3pp']
+c26 [label = '6pp']
+c212 [label = '12pp']
+
+# edge definitions with the node IDs
+edge [dir = 'none']
+a -> {a1 a2}
+b -> {b1 b2}
+c -> {c1 c2}
+a1 -> {a13 a16 a112}
+a2 -> {a23 a26 a212}
+b1 -> {b13 b16 b112}
+b2 -> {b23 b26 b212}
+c1 -> {c13 c16 c112}
+c2 -> {c23 c26 c212}
+}
+
+"
+)
+
+```
 
 # Statistical Analyses
+## Hypothesis 
+Parenting stress at 3-12 months' postpartum is predicted by negative birthing experiences (BEQ) and delivery method. 
+
+## Proposed Analyses
+Parenting stress ~ time + birth experience + delivery method*birth experience 
+
+### Variables
+- **Level 1 Outcome**: Parenting stress (PSI)
+- **Level 1 Predictor**: time (3, 6, 12 months)
+- **Level 2 Predictor**: subjective Birth Experience (BEQ)
+- **Level 3 Predictors**: Delivery Method, couples' mean birth experience (BEQ_cm)
+- **Covariates**:  
+        - Gender (person)  
+        - Age (person)  
+        - Health conditions (person)  
+        - Gestational age (couple)  
+        - Baby sex (couple)  
+
+
