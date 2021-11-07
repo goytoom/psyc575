@@ -1,0 +1,155 @@
+---
+title: "575 Final Project: Data Prep"
+author: "Lizzie, Suhaib, Emma"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+```{r load-pkg}
+library(tidyverse)
+library(haven)
+library(here)
+theme_set(jtools::theme_apa())
+```
+
+# Load Data
+## Import Data
+```{r data-import}
+# Read in the data
+df.hatch <- read_sav(here("data_files", "HATCH 09.29.21.sav"))
+```
+
+## Tidy Data
+```{r data-tidy}
+# Subset Variables
+df.mlm <- df.hatch %>%
+  select(c(CoupID,                                # Couple ID
+           
+           # Couple Level                         ## COUPLE ##
+           DelMod, ModeofDeliverySpecific,        # Delivery Method
+           GesAgeWk,                              # Gestational age
+           Bb.sex,                                # Baby sex
+           
+           # Person Level                         ## PERSON ##
+           contains("pnAge"),                     # Parent age
+           contains("Ethn"),                      # Parent ethnicity
+           contains("Educ"),                      # Parent level of education
+           contains("peritot"),                   # BEQ (birth stress)
+           
+           # Time Level                           ## TIME ##
+           bage3pp.1, bage6pp, bage12pp.1,        # Baby age
+           contains("PSI_t"),                     # Parenting Stress
+              contains("PSIt"),
+              contains("PSI.t")
+           ))   
+
+# Rename Variables
+colnames(df.mlm) <- c("CoupID",
+                      
+                      # Couple Level
+                      "DelMeth", "DelMeth.Specific",
+                      "GestationAge",
+                      "BabySex",
+                      
+                      # Person Level
+                      "age.mom", "age.dad",
+                      "ethnicity.mom", "ethnicity.dad",
+                      "education.mom", "education.dad",
+                      "beq.mom", "beq.dad",
+                      
+                      # Time Level
+                      "BabyAge.3", "BabyAge.6", "BabyAge.12",
+                      "PSI.3.mom", "PSI.12.mom", "PSI.12.dad",
+                          "PSI.3.dad", "PSI.6.dad",
+                          "PSI.6.mom"
+                      )
+
+# Reorder PSI Variables
+df.mlm <- df.mlm %>%
+  relocate(c("PSI.3.mom", "PSI.3.dad",
+             "PSI.6.mom", "PSI.6.dad",
+             "PSI.12.mom", "PSI.12.dad"),
+           .after = BabyAge.12)
+
+```
+
+## Wide to Long 
+```{r wide-to-long}
+# Person-Level and Time-Level Variables
+df.long1 <- df.mlm %>%
+  # Parent-level variables
+  pivot_longer(
+    cols = age.mom:beq.dad,
+    names_to = c(".value", "parent"),
+    names_pattern = "(age|ethnicity|education|beq).(mom|dad)",
+    names_transform = list(parent = as.factor)
+  ) %>%
+  # Assign participant IDs
+  mutate(PersonID = seq(1:200)) %>%
+  # Time-level variables
+  pivot_longer(
+    cols = BabyAge.3:BabyAge.12,
+    names_to = c(".value", "time"),
+    names_pattern = "(BabyAge).(3|6|12)",
+    names_transform = list(time = as.integer)
+  ) %>%
+  # Remove PSI variables
+  select(-starts_with("PSI"))
+
+# PSI Variable
+df.long2 <- df.mlm %>%
+  pivot_longer(
+    cols = PSI.3.mom:PSI.12.dad,
+    names_to = c(".value", "time", "parent"),
+    names_pattern = "(PSI).(3|6|12).(mom|dad)",
+    names_transform = list(time = as.integer, parent = as.factor)
+  ) %>%
+  # Remove variables in `df.long1` that aren't identifying variables
+  select(c(CoupID, time, parent, PSI))
+
+
+# Combine Data Frames
+df.long <- left_join(df.long1, df.long2, by = c("CoupID", "parent", "time")) %>%
+  # Move identifying variable
+  relocate(c(PersonID, parent, time), .after = CoupID) %>%
+  # Remove funky formatting
+  mutate(beq = na_if(beq, -97.450))
+```
+
+# Write New CSV
+```{r}
+write_sav(df.long, here("data_files", "575_project.sav"))
+```
+
+
+# Density Plots
+```{r plot-density}
+ggplot(data = df.long, aes(x = PSI)) +
+  geom_density() +
+  facet_grid(parent~time) +
+  labs(x = "Parenting Stress (PSI)", y = "")
+
+ggplot(data = df.long, aes(x = beq)) + 
+  geom_density() + 
+  facet_wrap(~parent) +
+  labs(x = "Birthing Stress (BEQ)", y = "")
+
+ggplot(data = na.omit(distinct(df.long, CoupID, .keep_all = T)), 
+       aes(x = as.factor(DelMeth), 
+           fill = as.factor(DelMeth.Specific))) + 
+  geom_bar(position = "stack", color = "black") + 
+  scale_x_discrete(labels = c("Vaginal", "C-Section")) + 
+  scale_fill_discrete(labels = c("Natural Vaginal", "Medicated Vaginal", "Unplanned C-Section", "Planned C-Section")) +
+  labs(x = "Delivery Method", y = "")
+```
+
+
