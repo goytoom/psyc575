@@ -25,7 +25,7 @@ theme_set(jtools::theme_apa())
 ## Import Data
 ```{r data-import}
 # Read in the data
-df.hatch <- read_sav(here("data_files", "HATCH 09.29.21.sav"))
+df.hatch <- HATCH_09_29_21
 ```
 
 ## Tidy Data
@@ -40,16 +40,21 @@ df.mlm <- df.hatch %>%
            Bb.sex,                                # Baby sex
            
            # Person Level                         ## PERSON ##
+           contains("peritot"),                   # BEQ (birth stress)
            contains("pnAge"),                     # Parent age
            contains("Ethn"),                      # Parent ethnicity
            contains("Educ"),                      # Parent level of education
-           contains("peritot"),                   # BEQ (birth stress)
+           contains("psam"),                      # Pregnancy-Specific Anxiety Measure
+           starts_with("pnBDI"),                  # Prenatal depression
+           starts_with("pnPSS"),                  # Prenatal Perceived Stress Scale
            
            # Time Level                           ## TIME ##
            bage3pp.1, bage6pp, bage12pp.1,        # Baby age
            contains("PSI_t"),                     # Parenting Stress
               contains("PSIt"),
-              contains("PSI.t")
+              contains("PSI.t"),
+           starts_with("BDI"),                    # Depression
+           starts_with("PSS")                     # Perceived Stress Scale
            ))   
 
 # Rename Variables
@@ -61,16 +66,26 @@ colnames(df.mlm) <- c("CoupID",
                       "BabySex",
                       
                       # Person Level
+                      "beq.mom", "beq.dad",
                       "age.mom", "age.dad",
                       "ethnicity.mom", "ethnicity.dad",
                       "education.mom", "education.dad",
-                      "beq.mom", "beq.dad",
+                      "pnPSAM.mom", "pnPSAM.dad",
+                      "pnBDI.mom", "pnBDI.dad",
+                      "pnPSS.mom", "pnPSS.dad",
+                      
                       
                       # Time Level
                       "BabyAge.3", "BabyAge.6", "BabyAge.12",
                       "PSI.3.mom", "PSI.12.mom", "PSI.12.dad",
                           "PSI.3.dad", "PSI.6.dad",
-                          "PSI.6.mom"
+                          "PSI.6.mom",
+                      "BDI.3.mom", "BDI.3.dad", 
+                        "BDI.6.mom", "BDI.6.dad",
+                        "BDI.12.mom", "BDI.12.dad",
+                      "PSS.3.mom", "PSS.3.dad", 
+                        "PSS.6.mom", "PSS.6.dad",
+                        "PSS.12.mom", "PSS.12.dad"
                       )
 
 # Reorder PSI Variables
@@ -88,9 +103,9 @@ df.mlm <- df.mlm %>%
 df.long1 <- df.mlm %>%
   # Parent-level variables
   pivot_longer(
-    cols = age.mom:beq.dad,
+    cols = beq.mom:pnPSS.dad,
     names_to = c(".value", "parent"),
-    names_pattern = "(age|ethnicity|education|beq).(mom|dad)",
+    names_pattern = "(beq|age|ethnicity|education|pnPSAM|pnBDI|pnPSS).(mom|dad)",
     names_transform = list(parent = as.factor)
   ) %>%
   # Assign participant IDs
@@ -103,18 +118,18 @@ df.long1 <- df.mlm %>%
     names_transform = list(time = as.integer)
   ) %>%
   # Remove PSI variables
-  select(-starts_with("PSI"))
+  select(-starts_with(c("PSI", "BDI", "PSS")))
 
 # PSI Variable
 df.long2 <- df.mlm %>%
   pivot_longer(
-    cols = PSI.3.mom:PSI.12.dad,
+    cols = PSI.3.mom:PSS.12.dad,
     names_to = c(".value", "time", "parent"),
-    names_pattern = "(PSI).(3|6|12).(mom|dad)",
+    names_pattern = "(PSI|BDI|PSS).(3|6|12).(mom|dad)",
     names_transform = list(time = as.integer, parent = as.factor)
   ) %>%
   # Remove variables in `df.long1` that aren't identifying variables
-  select(c(CoupID, time, parent, PSI))
+  select(c(CoupID, time, parent, PSI, BDI, PSS))
 
 
 # Combine Data Frames
