@@ -1,0 +1,175 @@
+---
+title: '575 Final Project: Data Analysis'
+author: "Lizzie, Suhaib, Emma"
+date: "`r Sys.Date()`"
+output:
+  bookdown::html_document2:
+    html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(tinytex.verbose = TRUE)
+```
+
+# Load packages
+```{r load-pkg, message=FALSE}
+library(tidyverse)
+library(haven)
+library(ggplot2)
+library(here)
+library(jtools)
+library(lme4)
+library(lmerTest)
+library(glmmTMB)
+library(modelsummary)
+library(knitr)
+library(kableExtra)
+library(brms)
+library(gtsummary)
+theme_set(jtools::theme_apa())
+```
+
+# Load Data
+## Import Data
+```{r data-import, message=FALSE}
+# Read in the data
+df.hatch <- read_sav(here("HATCH 09.29.21.sav"))
+```
+
+## Tidy Data
+```{r data-tidy, message=FALSE}
+# Subset Variables
+df.mlm <- df.hatch %>%
+  select(c(CoupID,                                # Couple ID
+           
+           # Couple Level                         ## COUPLE ##
+           DelMod, ModeofDeliverySpecific,        # Delivery Method
+           GesAgeWk,                              # Gestational age
+           Bb.sex,                                # Baby sex
+
+           # Person Level                         ## PERSON ##
+           contains("peritot"),                   # BEQ (birth stress)
+           contains("pnAge"),                     # Parent age
+           contains("Ethn"),                      # Parent ethnicity
+           contains("Educ"),                      # Parent level of education
+           contains("psam"),                      # Pregnancy-Specific Anxiety Measure
+           starts_with("pnBDI"),                  # Prenatal depression
+           starts_with("pnPSS"),                  # Prenatal Perceived Stress Scale
+
+           
+           # Time Level                           ## TIME ##
+           bage3pp.1, bage6pp, bage12pp.1,        # Baby age
+           contains("PSI_t"),                     # Parenting Stress
+              contains("PSIt"),
+              contains("PSI.t"),
+           starts_with("BDI"),                    # Depression
+           starts_with("PSS"),                    # Perceived Stress Scale
+           starts_with("EPDS")                    # Postpartum Depression
+           )) %>%
+  select(-c(EPDS.12.1, EPDS12.2))
+
+# Rename Variables
+colnames(df.mlm) <- c("CoupID",
+                      
+                      # Couple Level
+                      "DelMeth", "DelMeth.Specific",
+                      "GestationAge",
+                      "BabySex",
+                      
+                      # Person Level
+                      "beq.mom", "beq.dad",
+                      "age.mom", "age.dad",
+                      "ethnicity.mom", "ethnicity.dad",
+                      "education.mom", "education.dad",
+                      "pnPSAM.mom", "pnPSAM.dad",
+                      "pnBDI.mom", "pnBDI.dad",
+                      "pnPSS.mom", "pnPSS.dad",
+                      
+                      
+                      # Time Level
+                      "BabyAge.3", "BabyAge.6", "BabyAge.12",
+                      "PSI.3.mom", "PSI.12.mom", "PSI.12.dad",
+                          "PSI.3.dad", "PSI.6.dad",
+                          "PSI.6.mom",
+                      "BDI.3.mom", "BDI.3.dad", 
+                        "BDI.6.mom", "BDI.6.dad",
+                        "BDI.12.mom", "BDI.12.dad",
+                      "PSS.3.mom", "PSS.3.dad", 
+                        "PSS.6.mom", "PSS.6.dad",
+                        "PSS.12.mom", "PSS.12.dad",
+                      "EPDS.3.mom", "EPDS.3.dad", 
+                        "EPDS.6.mom", "EPDS.6.dad",
+                        "EPDS.12.mom", "EPDS.12.dad"
+                      )
+
+# Reorder PSI Variables
+df.mlm <- df.mlm %>%
+  relocate(c("PSI.3.mom", "PSI.3.dad",
+             "PSI.6.mom", "PSI.6.dad",
+             "PSI.12.mom", "PSI.12.dad"),
+           .after = BabyAge.12) 
+```
+
+## Wide to Long 
+```{r wide-to-long}
+# Person-Level and Time-Level Variables
+df.long1 <- df.mlm %>%
+  # Parent-level variables
+  pivot_longer(
+    cols = beq.mom:pnPSS.dad,
+    names_to = c(".value", "parent"),
+    names_pattern = "(beq|age|ethnicity|education|pnPSAM|pnBDI|pnPSS).(mom|dad)",
+    names_transform = list(parent = as.factor)
+  ) %>%
+  # Assign participant IDs
+  mutate(PersonID = seq(1:200)) %>%
+  # Time-level variables
+  pivot_longer(
+    cols = BabyAge.3:BabyAge.12,
+    names_to = c(".value", "time"),
+    names_pattern = "(BabyAge).(3|6|12)",
+    names_transform = list(time = as.integer)
+  ) %>%
+  # Remove time-varying variables
+  select(-starts_with(c("PSI", "BDI", "PSS", "EPDS")))
+
+# PSI Variable
+df.long2 <- df.mlm %>%
+  pivot_longer(
+    cols = PSI.3.mom:EPDS.12.dad,
+    names_to = c(".value", "time", "parent"),
+    names_pattern = "(PSI|BDI|PSS|EPDS).(3|6|12).(mom|dad)",
+    names_transform = list(time = as.integer, parent = as.factor)
+  ) %>%
+  # Select relevant variables
+  select(c(CoupID, time, parent, PSI, BDI, PSS, EPDS))
+
+
+# Combine Data Frames
+df.long <- left_join(df.long1, df.long2, by = c("CoupID", "parent", "time")) %>%
+  # Move identifying variable
+  relocate(c(PersonID, parent, time), .after = CoupID) %>%
+  # Remove funky formatting
+  mutate(beq = na_if(beq, -97.450))
+```
+
+## Data Processing
+```{r, message=FALSE}
+#scaling and decomposing of variables
+df_scaled <- df.long %>% 
+  mutate(log_BDI = log(BDI+1)) %>%
+  mutate(log_pnBDI = log(pnBDI+1)) %>%
+  mutate(DelMeth = as.factor(DelMeth)) %>%
+  mutate(log_EPDS = log(EPDS+1)) %>%
+  group_by(CoupID) %>% mutate(beq_cm = mean(beq)) %>% ungroup() %>% mutate(beq_cmc = beq - beq_cm, beq_st = scale(beq), beq_stc = scale(beq_cmc)) 
+  
+```
+
+## Save Data
+```{r}
+write_sav(df_scaled, here("df_scaled.sav"))
+```
+
+
