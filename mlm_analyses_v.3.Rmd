@@ -167,7 +167,7 @@ df_scaled <- df.long %>%
 
 ## Save Data
 ```{r}
-write_sav(df_scaled, here("df_scaled.sav"))
+write_sav(df_scaled, here("../df_scaled.sav"))
 ```
 
 # Plots
