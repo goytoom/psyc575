@@ -34,15 +34,15 @@ theme_set(jtools::theme_apa())
 # Load Data
 ## Import Data
 ```{r data-import, message=FALSE}
-# Read in the data
-df.hatch <- read_sav(here("df_scaled.sav"))
+df.hatch <- read_sav(here("HATCH 09.29.21.sav")) # original .sav file
+df_scaled <- read_sav(here("df_scaled.sav")) # tidied data from `mlm_datacleaning.rmd`
 ```
 
 # Plots
 ## Density Plots
 ```{r plot-density, message=FALSE}
 # BDI Density
-f1 <- ggplot(data = df.long, aes(x = BDI)) +
+f1 <- ggplot(data = df_scaled, aes(x = BDI)) +
   geom_density() +
   facet_grid(parent~time) +
   labs(x = "Depression (BDI)", y = "", 
@@ -59,7 +59,7 @@ f2 <- ggplot(data = df_scaled, aes(x = log_BDI)) +
 gridExtra::grid.arrange(f1, f2, ncol = 2)
 
 # BEQ
-ggplot(data = df.long, aes(x = beq)) + 
+ggplot(data = df_scaled, aes(x = beq)) + 
   geom_density() + 
   facet_wrap(~parent) +
   labs(x = "Birthing Stress (BEQ)", y = "",
@@ -69,7 +69,7 @@ ggplot(data = df.long, aes(x = beq)) +
 ## Bar Plot
 ```{r plot-bar}
 # Delivery Method Without Missing Data
-ggplot(data = distinct(na.omit(df.long), CoupID, .keep_all = T), 
+ggplot(data = distinct(na.omit(df_scaled), CoupID, .keep_all = T), 
        aes(x = as.factor(DelMeth), 
            fill = as.factor(DelMeth.Specific))) + 
   geom_bar(position = "stack", color = "black") + 
@@ -90,7 +90,7 @@ ggplot(data = distinct(na.omit(df.long), CoupID, .keep_all = T),
 
 ## Spaghetti Plot
 ```{r}
-ggplot(df.long, aes(x = time, y = BDI, color = factor(CoupID))) + 
+ggplot(df_scaled, aes(x = time, y = BDI, color = factor(CoupID))) + 
   geom_jitter(size = 0.5, alpha = 0.2, width = 0.1, height = 0.1) + 
   geom_line(aes(group = PersonID)) +  # add lines to connect the data for each person
   # add a mean trajectory
@@ -99,22 +99,22 @@ ggplot(df.long, aes(x = time, y = BDI, color = factor(CoupID))) +
    # Suppress legend
   guides(color = "none", fill = "none") +
   # Labels
-  labs(title = "Change in Depression Levels", 
+  labs(title = "Figure 5", subtitle = "Change in Depression Levels", 
        x = "", y = "BDI") + 
   # Remove Label
   scale_x_continuous(breaks = c(3,6, 12), 
                      labels = c("3PP", "6PP", "12PP"))
 ```
 
-## Scatterplots 
+## Scatterplots -- NEEDS FORMATTING
 ```{r}
 ggplot(df_scaled, aes(x = beq_cmc, y = BDI, color = factor(parent))) +
   geom_jitter() +
   geom_smooth(method = "lm", se = F) + 
-  facet_grid(~time)
+  facet_grid(~time) +
 ```
 
-## Box Plots
+## Box Plots -- NEEDS FORMATTING
 ```{r}
 ggstatsplot::grouped_ggbetweenstats(data = df_scaled, 
                x = time,
@@ -166,10 +166,6 @@ summary(m2)
 # Log-Transformed BDI without time interaction, does not converge with random slope, so take out!
 m3 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (1|CoupID/PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
 summary(m3)
-
-# EPDS
-m3.5 <- glmmTMB(log_EPDS ~ beq_cmc + time*DelMeth*beq_cm + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
-summary(m3.5)
 ```
 Model 1 looks promising:
 
@@ -214,6 +210,7 @@ interactions::interact_plot(m4,
               point.alpha = 0.2, 
               facet.modx = FALSE)
 ```
+
 ### Bayesian
 
 ```{r}
@@ -238,7 +235,7 @@ Significant:
 ```{r}
 # Same syntax; just change `lmer()` to `brm()`
 m6_robust <- brm(
-  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + ethnicity + age + education +(time|CoupID) + (1|CoupID:PersonID),
+  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + ethnicity + age + education + (time|CoupID) + (1|CoupID:PersonID),
     # Assume random effects follow a t distribution
   # Assume the errors follow a t distribution
   family = student(),
@@ -388,11 +385,48 @@ msummary(models,
 
 ## sjPlot
 ```{r}
-sjPlot::tab_model(m2, m3, m5,
-                  dv.labels = c("3-Way Interaction Model", "2-Way Interaction Model", "Covariate Model"),
-                  show.aic = T,
-                  show.loglik = T,
-                  string.ci = "95% CI",
-                  pred.labels = names)
+sjPlot::tab_model(m6_robust, m7_robust)
+```
+
+## Demographics
+```{r}
+t1 <- df_scaled %>%
+  group_by(PersonID) %>% mutate(bdi_mean = mean(BDI, na.rm = T)) %>% ungroup() %>%
+  distinct(PersonID, .keep_all = T) %>%
+  
+  mutate(ethnicity = factor(x = ethnicity, levels = c(1:7), labels = c("White", "Black", "Hispanic/LatinX", "American Indian/Alaska Native", "AAPI", "Other", "Declined"))) %>% 
+  mutate(education = factor(x = education, levels = c(1:6), labels = c("High School/GED", "Some College", "Associate's Degree", "Bachelor's Degree", "Master's Degree", "Professional/Doctoral Degree"))) %>%
+  
+  select(age, beq, pnBDI, bdi_mean, ethnicity, education, parent) %>%
+  tbl_summary(statistic = all_continuous() ~ "{mean} ({sd})",
+              missing = "no", 
+              by = parent,
+              label = list(age ~ "Parent Age", 
+                           beq ~ "BEQ",
+                           pnBDI ~ "Prenatal BDI",
+                           bdi_mean ~ "Postpartum BDI",
+                           ethnicity ~ "Ethnicity",
+                           education ~ "Education")) %>%
+  add_overall() %>%
+  italicize_levels() %>%
+  modify_header(list(stat_0 ~ "**All Parents**", 
+                     stat_1 ~ "**Fathers**",
+                     stat_2 ~ "**Mothers**"))
+
+t2 <- df_scaled %>%
+  distinct(CoupID, .keep_all = T) %>%
+  mutate(BabySex = factor(x = BabySex, levels = c(0, 1), labels = c("Female", "Male"))) %>%
+  mutate(DelMeth = factor(x = DelMeth, levels = c(0, 1), labels = c("Vaginal", "C-Section"))) %>%
+  select(GestationAge, BabySex, DelMeth) %>%
+  tbl_summary(statistic = all_continuous() ~ "{mean} ({sd})", 
+              missing = "no") %>%
+  italicize_levels()
+
+tbl_stack(list(t1, t2)) %>%
+  as_kable_extra(caption = "Table 1") %>% 
+  kable_classic(full_width = F) %>%
+  pack_rows("Level 2", 1, 19) %>%
+  pack_rows("Level 3", 20, 26)
+
 ```
 
