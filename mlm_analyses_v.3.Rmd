@@ -26,6 +26,7 @@ library(glmmTMB)
 library(modelsummary)
 library(knitr)
 library(kableExtra)
+library(brms)
 theme_set(jtools::theme_apa())
 ```
 
@@ -33,7 +34,7 @@ theme_set(jtools::theme_apa())
 ## Import Data
 ```{r data-import, message=FALSE}
 # Read in the data
-df.hatch <- read_sav("/Users/Lizzie/Documents/USC/Coursework/21F/575/575 R Scripts/final_project/HATCH 09.29.21.sav")
+df.hatch <- read_sav("../HATCH 09.29.21.sav")
 ```
 
 ## Tidy Data
@@ -160,7 +161,7 @@ df_scaled <- df.long %>%
   mutate(log_BDI = log(BDI+1)) %>%
   mutate(DelMeth = as.factor(DelMeth)) %>%
   mutate(log_EPDS = log(EPDS+1)) %>%
-  group_by(CoupID) %>% mutate(beq_cm = mean(beq)) %>% ungroup() %>% mutate(beq_cmc = beq - beq_cm)
+  group_by(CoupID) %>% mutate(beq_cm = mean(beq)) %>% ungroup() %>% mutate(beq_cmc = beq - beq_cm, beq_st = scale(beq), beq_stc = scale(beq_cmc)) 
   
 ```
 
@@ -248,9 +249,70 @@ ggstatsplot::grouped_ggbetweenstats(data = df_scaled,
                
 ```
 
+# Models
+
+## Random Slope Tests
+```{r message=FALSE}
+m01 <- lmer(log_BDI ~ 1 + (time|CoupID/PersonID), data = df_scaled, control = lmerControl(optimizer = "nmkbw")) 
+m02 <- lmer(log_BDI ~ 1 + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled, control = lmerControl(optimizer = "nmkbw")) 
+ranova(m01) #coup -> significant, person nonsignificant -> did not converge so test again without random slope on Person but random intercept
+ranova(m02) #signficiant and converges!
+```
+
+## Basic Models
+```{r}
+# Raw BDI
+m1 <- glmmTMB(BDI ~ beq_cmc + time*DelMeth*beq_cm + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled)
+summary(m1)
+
+# Log-Transformed BDI, include both random slopes for convergence! Remove the 3way interaction!
+m2 <- glmmTMB(log_BDI ~ beq_cmc + time*beq_cm + beq_cm*DelMeth + time*DelMeth + (time|CoupID/PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m2)
+
+# Log-Transformed BDI without time interaction, does not converge with random slope, so take out!
+m3 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (1|CoupID/PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m3)
+
+# EPDS
+m3.5 <- glmmTMB(log_EPDS ~ beq_cmc + time*DelMeth*beq_cm + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m3.5)
+```
+Model 1 looks promising:
+
+1. Delivery method predicts BDI: Delivery method 1 is associated with a significant increase in BDI
+2. couple-level beq predicts BDI: Couple level beq (what exactly is it measuring?) is associated with a significant increase in BDI
+3. BDI is not impacted by time-since-birth
+4. There is an interaction of DelMeth and beq, with DelMeth1 reducing the influence of beq on BDI, and this interaction is stable over time!
+5. The impact of delivery method does NOT change over time
+6. The impact of couple-level beq does NOT change over time 
+7. Individual-level beq does NOT predict BDI
+
+### Covariate Models
+```{r}
+# Gender
+m4 <- glmmTMB(BDI ~ beq_cmc + time*DelMeth*beq_cm + parent + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled)
+summary(m4)
+
+# I think it is better to keep all data in the dataset and account for gender, instead of filtering out!
+
+# # Gender and Prenatal Depression -> does not converge
+# m5 <- glmmTMB(log_BDI ~ beq_cmc + time*DelMeth*beq_cm + parent + pnBDI + (1|CoupID) + (1|CoupID:PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+# summary(m5)
+# 
+# # Gender, pnBDI, parent-level demographics, does not converge
+# m6 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + ethnicity + age + education + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="Nelder-Mead")))
+# summary(m6)
+# 
+# # Gender, pnBDI, baby demographics, does not converge
+# m7 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + GestationAge + BabySex + (time|PersonID) + (1|CoupID), data = df_scaled)
+# summary(m7)
+
+#Models do not converge -> use bayesian models below instead!!
+```
+
 ## Interaction Plot
 ```{r}
-interactions::interact_plot(m5, 
+interactions::interact_plot(m4, 
               pred = "beq_cm",
               modx = "DelMeth",
               plot.points = TRUE, 
@@ -258,74 +320,48 @@ interactions::interact_plot(m5,
               point.alpha = 0.2, 
               facet.modx = FALSE)
 ```
+### Bayesian
 
-# Models
-
-## Random Slope Tests
-```{r message=FALSE}
-m01 <- lmer(log_BDI ~ 1 + (time|PersonID), data=df_scaled)
-m02 <- lmer(log_BDI ~ 1 + (time|CoupID), data=df_scaled)
-m03 <- lmer(log_BDI ~ 1 + (time|PersonID) + (time|CoupID), data = df_scaled) 
-ranova(m01) #sig
-ranova(m02) #nonsig
-ranova(m03) #person=nonsig; couple=sig
-```
-
-## Basic Models
 ```{r}
-# Raw BDI
-m1 <- glmmTMB(BDI ~ beq_cmc + time*DelMeth*beq_cm + (time|PersonID) + (1|CoupID), data = df_scaled)
-summary(m1)
-
-# Log-Transformed BDI
-m2 <- glmmTMB(log_BDI ~ beq_cmc + time*DelMeth*beq_cm + (time|PersonID) + (1|CoupID), data = df_scaled)
-summary(m2)
-
-# Log-Transformed BDI without 2-way interaction
-m3 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (time|PersonID) + (1|CoupID), data = df_scaled)
-summary(m3)
-
-# EPDS
-m3.5 <- glmmTMB(log_EPDS ~ beq_cmc + time + DelMeth*beq_cm + (time|PersonID) + (1|CoupID), data = df_scaled)
-summary(m3.5)
+# Same syntax; just change `lmer()` to `brm()`
+m7_robust <- brm(
+  log_BDI ~ beq_cmc + time*DelMeth*beq_cm + parent + pnBDI + GestationAge + BabySex + (time|CoupID) + (1|CoupID:PersonID),
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+summary(m7_robust)
 ```
+Significant:
+  *DelMeth1                 
+  *pnBDI                    
+  *DelMeth1:beq_cm
 
-1. delivery method predicts BDI 
-2. couple-level beq predicts BDI
-3. BDI is impacted by time-since-birth
-4. del meth and couple-level beq work together to predict BDI, and that interaction does NOT change over time?
-5. the impact of delivery method does NOT change over time
-6. the impact of couple-level beq does NOT change over time 
-7. individual-level beq does NOT predict BDI
 
-### Covariate Models
 ```{r}
-# Gender
-m4 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + (time|PersonID) + (1|CoupID), data = df_scaled)
-summary(m4)
-
-## Mom-Only
-df_mom <- filter(df_scaled, parent == "mom")
-m_mom <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm  + (time|PersonID) + (1|CoupID), data = df_mom)
-summary(m_mom)
-
-## Dad-Only
-df_dad <- filter(df_scaled, parent == "dad")
-m_dad <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm  + (time|PersonID) + (1|CoupID), data = df_dad)
-summary(m_dad)
-
-# Gender and Prenatal Depression
-m5 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + (time|PersonID) + (1|CoupID), data = df_scaled)
-summary(m5)
-
-# Gender, pnBDI, parent-level demographics
-m6 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + ethnicity + age + education + (time|PersonID) + (1|CoupID), data = df_scaled)
-summary(m6)
-
-# Gender, pnBDI, baby demographics
-m7 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + GestationAge + BabySex + (time|PersonID) + (1|CoupID), data = df_scaled)
-summary(m7)
+# Same syntax; just change `lmer()` to `brm()`
+m6_robust <- brm(
+  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + ethnicity + age + education +(time|CoupID) + (1|CoupID:PersonID),
+    # Assume random effects follow a t distribution
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+summary(m6_robust)
 ```
+Significant:
+  *time               
+  *DelMeth
+  *beq_cm 
+  *pnBDI
+  *DelMeth1:beq_cm
+
 
 ## Model Equation:
 Nomenclature:  
@@ -367,7 +403,7 @@ $$
 $$
 
 # Tables
-## Predictor Names
+## Predictor Names -> needs to be adjusted to the chosen models!
 ```{r include=FALSE}
 names <- c(
   '(Intercept)' = "Intercept",
