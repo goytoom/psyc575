@@ -26,7 +26,7 @@ theme_set(jtools::theme_apa())
 ## Import Data
 ```{r data-import, message=FALSE}
 # Read in the data
-df.hatch <- read_sav(here("HATCH 09.29.21.sav"))
+df.hatch <- read_sav(here("../HATCH 09.29.21.sav"))
 ```
 
 ## Tidy Data
@@ -154,13 +154,14 @@ df_scaled <- df.long %>%
   mutate(log_pnBDI = log(pnBDI+1)) %>%
   mutate(DelMeth = as.factor(DelMeth)) %>%
   mutate(log_EPDS = log(EPDS+1)) %>%
+  mutate(parent = as.factor(parent)) %>%
   group_by(CoupID) %>% mutate(beq_cm = mean(beq)) %>% ungroup() %>% mutate(beq_cmc = beq - beq_cm, beq_st = scale(beq), beq_stc = scale(beq_cmc)) 
   
 ```
 
 ## Save Data
 ```{r}
-write_sav(df_scaled, here("df_scaled.sav"))
+write_sav(df_scaled, here("../df_scaled.sav"))
 ```
 
 

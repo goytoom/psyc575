@@ -27,44 +27,44 @@ library(modelsummary)
 library(knitr)
 library(kableExtra)
 library(brms)
-library(gtsummary)
+# library(gtsummary)
 theme_set(jtools::theme_apa())
+# theme_set(theme_default())
 ```
 
 # Load Data
 ## Import Data
 ```{r data-import, message=FALSE}
-df.hatch <- read_sav(here("HATCH 09.29.21.sav")) # original .sav file
-df_scaled <- read_sav(here("df_scaled.sav")) # tidied data from `mlm_datacleaning.rmd`
+df.hatch <- read_sav(here("../HATCH 09.29.21.sav")) # original .sav file
+df_scaled <- read_sav(here("../df_scaled.sav")) # tidied data from `mlm_datacleaning.rmd`
 ```
 
 # Plots
 ## Density Plots
 ```{r plot-density, message=FALSE}
 # BDI Density
-f1 <- ggplot(data = df_scaled, aes(x = BDI)) +
-  geom_density() +
-  facet_grid(parent~time) +
-  labs(x = "Depression (BDI)", y = "", 
-       title = "Figure 1", subtitle = "Distribution of BDI")
+f1 <- ggplot(data = df_scaled, aes(x = BDI, fill=as.factor(parent))) +
+  geom_density(alpha=0.6, show.legend = FALSE) +
+  facet_grid(.~time, scales = "free", space='free') +
+  labs(x = "Depression (BDI)", y = "") + scale_fill_manual(values=c("#F8766D", "#00BA38")) #change colors here
 
-# Log-BDI Density
-f2 <- ggplot(data = df_scaled, aes(x = log_BDI)) +
-  geom_density() +
-  facet_grid(parent~time) +
-  labs(x = "Log-Transformed Depression (BDI)", y = "", 
-       title = "Figure 2", subtitle = "Distribution of Log-Transformed BDI")
-
-# Combine BDI Density Plots
-gridExtra::grid.arrange(f1, f2, ncol = 2)
+f2 <- ggplot(data = df_scaled, aes(x = log_BDI, fill=as.factor(parent))) +
+  geom_density(alpha=0.6) +
+  facet_grid(.~time) +
+  labs(x = "Log-Transformed Depression (BDI)", y = "") + scale_fill_manual(values=c("#F8766D", "#00BA38")) #change colors here
 
 # BEQ
-ggplot(data = df_scaled, aes(x = beq)) + 
-  geom_density() + 
-  facet_wrap(~parent) +
+ggplot(data = df_scaled, aes(x = beq, fill = as.factor(parent))) + 
+  geom_density(alpha = 0.6) +
   labs(x = "Birthing Stress (BEQ)", y = "",
-       title = "Figure 3", subtitle = "Distribution of BEQ")
+       title = "Figure 3", subtitle = "Distribution of BEQ") + scale_fill_manual(values=c("#F8766D", "#00BA38")) #change colors here
+
 ```
+```{r fig.height=4, fig.width=16}
+# Combine BDI Density Plots
+gridExtra::grid.arrange(f1, f2, ncol = 2)
+```
+
 
 ## Bar Plot
 ```{r plot-bar}
@@ -134,6 +134,7 @@ ggstatsplot::grouped_ggbetweenstats(data = df_scaled,
 
 ## Interaction Plot
 ```{r}
+#why is it here? it needs to run after the respective model!
 interactions::interact_plot(m5, 
               pred = "beq_cm",
               modx = "DelMeth",
@@ -150,12 +151,12 @@ interactions::interact_plot(m5,
 m01 <- lmer(log_BDI ~ 1 + (time|CoupID/PersonID), data = df_scaled, control = lmerControl(optimizer = "nmkbw")) 
 m02 <- lmer(log_BDI ~ 1 + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled, control = lmerControl(optimizer = "nmkbw")) 
 ranova(m01) #coup -> significant, person nonsignificant -> did not converge so test again without random slope on Person but random intercept
-ranova(m02) #signficiant and converges!
+ranova(m02) #significant and converges!
 ```
 
 ## Basic Models
 ```{r}
-# Raw BDI
+# Raw BDI, remove time interactions?
 m1 <- glmmTMB(BDI ~ beq_cmc + time*DelMeth*beq_cm + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled)
 summary(m1)
 
@@ -167,10 +168,11 @@ summary(m2)
 m3 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (1|CoupID/PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
 summary(m3)
 ```
-Model 1 looks promising:
+
+Model 1 and 2 look promising:
 
 1. Delivery method predicts BDI: Delivery method 1 is associated with a significant increase in BDI
-2. couple-level beq predicts BDI: Couple level beq (what exactly is it measuring?) is associated with a significant increase in BDI
+2. Couple-level beq predicts BDI: Couple level beq (what exactly is it measuring?) is associated with a significant increase in BDI
 3. BDI is not impacted by time-since-birth
 4. There is an interaction of DelMeth and beq, with DelMeth1 reducing the influence of beq on BDI, and this interaction is stable over time!
 5. The impact of delivery method does NOT change over time
@@ -179,7 +181,7 @@ Model 1 looks promising:
 
 ### Covariate Models
 ```{r}
-# Gender
+# Gender, remove time interactions?
 m4 <- glmmTMB(BDI ~ beq_cmc + time*DelMeth*beq_cm + parent + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled)
 summary(m4)
 
@@ -214,9 +216,9 @@ interactions::interact_plot(m4,
 ### Bayesian
 
 ```{r}
-# Same syntax; just change `lmer()` to `brm()`
-m7_robust <- brm(
-  log_BDI ~ beq_cmc + time*DelMeth*beq_cm + parent + pnBDI + GestationAge + BabySex + (time|CoupID) + (1|CoupID:PersonID),
+# Model 4 as bayesian, remove time interactions? below is a version without!
+m4_robust <- brm(
+  log_BDI ~ beq_cmc + time*DelMeth + beq_cm*DelMeth + time*beq_cm + parent + (time|CoupID/PersonID),
   # Assume the errors follow a t distribution
   family = student(),
   data = df_scaled,
@@ -224,18 +226,40 @@ m7_robust <- brm(
   iter = 4000,
   control = list(adapt_delta = .95)
 )
-summary(m7_robust)
+summary(m4_robust)
 ```
 Significant:
-  *DelMeth1                 
-  *pnBDI                    
-  *DelMeth1:beq_cm
-
-
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *beq_cm: increases BDI
+  *parent: Mom increases BDI compared to dad
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+  
+  
 ```{r}
-# Same syntax; just change `lmer()` to `brm()`
+# m4 including baby demographics, no time interactions
+m5_robust <- brm(
+  log_BDI ~ beq_cmc + time + beq_cm*DelMeth + parent + pnBDI + GestationAge + BabySex + (time|CoupID/PersonID),
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+summary(m5_robust)
+```
+
+Significant:
+  *time: reduction of BDI over time
+  *beq_cm: increases BDI
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *pnBDI: increases BDI (slightly?)
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+  
+```{r}
+# m4 including parent demographics, no time interaction
 m6_robust <- brm(
-  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + ethnicity + age + education + (time|CoupID) + (1|CoupID:PersonID),
+  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + ethnicity + age + education + (time|CoupID/PersonID),
     # Assume random effects follow a t distribution
   # Assume the errors follow a t distribution
   family = student(),
@@ -246,14 +270,56 @@ m6_robust <- brm(
 )
 summary(m6_robust)
 ```
+
 Significant:
-  *time               
-  *DelMeth
-  *beq_cm 
-  *pnBDI
-  *DelMeth1:beq_cm
+  *time: reduction of BDI
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *beq_cm: increases BDI
+  *pnBDI: increases BDI
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
 
+```{r}
+# m4 including all covariates, include time interactions? Version without below!
+m7_robust <- brm(
+  log_BDI ~ beq_cmc + time*DelMeth + time*beq_cm + DelMeth*beq_cm + parent + GestationAge + pnBDI + ethnicity + age + education + BabySex + (time|CoupID/PersonID),
+    # Assume random effects follow a t distribution
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+summary(m7_robust)
+```
 
+Significant:
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *pnBDI: increases BDI
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+
+```{r}
+# m4 including all covariates, no time interactions
+m8_robust <- brm(
+  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + GestationAge + pnBDI + ethnicity + age + education + BabySex + (time|CoupID/PersonID),
+    # Assume random effects follow a t distribution
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+summary(m8_robust)
+```
+
+Significant:
+  *time: reduces BDI
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *beq_cm: increases BDI
+  *pnBDI: increases BDI
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+  
 ## Model Equation:
 Nomenclature:  
 
