@@ -1,0 +1,561 @@
+---
+title: '575 Final Project: Data Analysis'
+author: "Lizzie, Suhaib, Emma"
+date: "`r Sys.Date()`"
+output:
+  bookdown::html_document2:
+    html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(tinytex.verbose = TRUE)
+```
+
+# Load packages
+```{r load-pkg, message=FALSE}
+library(tidyverse)
+library(haven)
+library(ggplot2)
+library(here)
+library(jtools)
+library(lme4)
+library(lmerTest)
+library(glmmTMB)
+library(modelsummary)
+library(knitr)
+library(kableExtra)
+library(brms)
+theme_set(jtools::theme_apa())
+```
+
+# Load Data
+## Import Data
+```{r data-import, message=FALSE}
+# Read in the data
+df.hatch <- read_sav("../HATCH 09.29.21.sav")
+```
+
+## Tidy Data
+```{r data-tidy, message=FALSE}
+# Subset Variables
+df.mlm <- df.hatch %>%
+  select(c(CoupID,                                # Couple ID
+           
+           # Couple Level                         ## COUPLE ##
+           DelMod, ModeofDeliverySpecific,        # Delivery Method
+           GesAgeWk,                              # Gestational age
+           Bb.sex,                                # Baby sex
+
+           # Person Level                         ## PERSON ##
+           contains("peritot"),                   # BEQ (birth stress)
+           contains("pnAge"),                     # Parent age
+           contains("Ethn"),                      # Parent ethnicity
+           contains("Educ"),                      # Parent level of education
+           contains("psam"),                      # Pregnancy-Specific Anxiety Measure
+           starts_with("pnBDI"),                  # Prenatal depression
+           starts_with("pnPSS"),                  # Prenatal Perceived Stress Scale
+
+           
+           # Time Level                           ## TIME ##
+           bage3pp.1, bage6pp, bage12pp.1,        # Baby age
+           contains("PSI_t"),                     # Parenting Stress
+              contains("PSIt"),
+              contains("PSI.t"),
+           starts_with("BDI"),                    # Depression
+           starts_with("PSS"),                    # Perceived Stress Scale
+           starts_with("EPDS")                    # Postpartum Depression
+           )) %>%
+  select(-c(EPDS.12.1, EPDS12.2))
+
+# Rename Variables
+colnames(df.mlm) <- c("CoupID",
+                      
+                      # Couple Level
+                      "DelMeth", "DelMeth.Specific",
+                      "GestationAge",
+                      "BabySex",
+                      
+                      # Person Level
+                      "beq.mom", "beq.dad",
+                      "age.mom", "age.dad",
+                      "ethnicity.mom", "ethnicity.dad",
+                      "education.mom", "education.dad",
+                      "pnPSAM.mom", "pnPSAM.dad",
+                      "pnBDI.mom", "pnBDI.dad",
+                      "pnPSS.mom", "pnPSS.dad",
+                      
+                      
+                      # Time Level
+                      "BabyAge.3", "BabyAge.6", "BabyAge.12",
+                      "PSI.3.mom", "PSI.12.mom", "PSI.12.dad",
+                          "PSI.3.dad", "PSI.6.dad",
+                          "PSI.6.mom",
+                      "BDI.3.mom", "BDI.3.dad", 
+                        "BDI.6.mom", "BDI.6.dad",
+                        "BDI.12.mom", "BDI.12.dad",
+                      "PSS.3.mom", "PSS.3.dad", 
+                        "PSS.6.mom", "PSS.6.dad",
+                        "PSS.12.mom", "PSS.12.dad",
+                      "EPDS.3.mom", "EPDS.3.dad", 
+                        "EPDS.6.mom", "EPDS.6.dad",
+                        "EPDS.12.mom", "EPDS.12.dad"
+                      )
+
+# Reorder PSI Variables
+df.mlm <- df.mlm %>%
+  relocate(c("PSI.3.mom", "PSI.3.dad",
+             "PSI.6.mom", "PSI.6.dad",
+             "PSI.12.mom", "PSI.12.dad"),
+           .after = BabyAge.12) 
+```
+
+## Wide to Long 
+```{r wide-to-long}
+# Person-Level and Time-Level Variables
+df.long1 <- df.mlm %>%
+  # Parent-level variables
+  pivot_longer(
+    cols = beq.mom:pnPSS.dad,
+    names_to = c(".value", "parent"),
+    names_pattern = "(beq|age|ethnicity|education|pnPSAM|pnBDI|pnPSS).(mom|dad)",
+    names_transform = list(parent = as.factor)
+  ) %>%
+  # Assign participant IDs
+  mutate(PersonID = seq(1:200)) %>%
+  # Time-level variables
+  pivot_longer(
+    cols = BabyAge.3:BabyAge.12,
+    names_to = c(".value", "time"),
+    names_pattern = "(BabyAge).(3|6|12)",
+    names_transform = list(time = as.integer)
+  ) %>%
+  # Remove time-varying variables
+  select(-starts_with(c("PSI", "BDI", "PSS", "EPDS")))
+
+# PSI Variable
+df.long2 <- df.mlm %>%
+  pivot_longer(
+    cols = PSI.3.mom:EPDS.12.dad,
+    names_to = c(".value", "time", "parent"),
+    names_pattern = "(PSI|BDI|PSS|EPDS).(3|6|12).(mom|dad)",
+    names_transform = list(time = as.integer, parent = as.factor)
+  ) %>%
+  # Select relevant variables
+  select(c(CoupID, time, parent, PSI, BDI, PSS, EPDS))
+
+
+# Combine Data Frames
+df.long <- left_join(df.long1, df.long2, by = c("CoupID", "parent", "time")) %>%
+  # Move identifying variable
+  relocate(c(PersonID, parent, time), .after = CoupID) %>%
+  # Remove funky formatting
+  mutate(beq = na_if(beq, -97.450))
+```
+
+## Data Processing
+```{r, message=FALSE}
+#scaling and decomposing of variables
+df_scaled <- df.long %>% 
+  mutate(log_BDI = log(BDI+1)) %>%
+  mutate(DelMeth = as.factor(DelMeth)) %>%
+  mutate(log_EPDS = log(EPDS+1)) %>%
+  group_by(CoupID) %>% mutate(beq_cm = mean(beq)) %>% ungroup() %>% mutate(beq_cmc = beq - beq_cm, beq_st = scale(beq), beq_stc = scale(beq_cmc)) 
+  
+```
+
+## Save Data
+```{r}
+write_sav(df_scaled, here("../df_scaled.sav"))
+```
+
+# Plots
+## Density Plots
+```{r plot-density, message=FALSE}
+library(cowplot)
+
+p1 <- ggplot(data = df.long, aes(x = BDI, fill=parent)) +
+  geom_density(alpha=0.6, show.legend = FALSE) +
+  facet_grid(.~time, scales = "free", space='free') +
+  labs(x = "Depression (BDI)", y = "")
+
+p2 <- ggplot(data = df_scaled, aes(x = log_BDI, fill=parent)) +
+  geom_density(alpha=0.6) +
+  facet_grid(.~time) +
+  labs(x = "Log-Transformed Depression (BDI)", y = "")
+
+p3 <- ggplot(data = df.long, aes(x = EPDS, fill = parent)) +
+  geom_density(alpha = 0.5) +
+  facet_grid(.~time) +
+  labs(x = "PP Depression (EPDS)", y = "")
+
+p4 <- ggplot(data = df.long, aes(x = beq, fill = parent)) + 
+  geom_density(alpha = 0.5) + 
+  labs(x = "Birthing Stress (BEQ)", y = "")
+
+```
+
+```{r, fig.width=16,fig.height=4}
+plot_grid(p1, p2, labels = "AUTO")
+```
+
+```{r, fig.width=12,fig.height=6}
+p3
+
+p4
+```
+
+
+## Bar Plot
+```{r plot-bar}
+ggplot(data = distinct(df.long, CoupID, .keep_all = T), 
+       aes(x = as.factor(DelMeth), 
+           fill = as.factor(DelMeth.Specific))) + 
+  geom_bar(position = "stack", color = "black") + 
+  scale_x_discrete(labels = c("Vaginal", "C-Section", "Missing")) + 
+  scale_fill_discrete(labels = c("Natural Vaginal", "Medicated Vaginal", "Unplanned C-Section", "Planned C-Section", "Missing")) +
+  labs(x = "Delivery Method", y = "")
+```
+
+## Spaghetti Plot
+```{r}
+ggplot(df.long, aes(x = time, y = BDI, color = factor(CoupID))) + 
+  geom_jitter(size = 0.5, alpha = 0.2, width = 0.1, height = 0.1) + 
+  geom_line(aes(group = PersonID)) +  # add lines to connect the data for each person
+  # add a mean trajectory
+  stat_summary(fun = "mean", col = "black", size = 1.5, geom = "line") + 
+  facet_wrap(~parent) + 
+   # Suppress legend
+  guides(color = "none", fill = "none") +
+  # Labels
+  labs(title = "Change in Depression Levels", 
+       x = "", y = "BDI") + 
+  # Remove Label
+  scale_x_continuous(breaks = c(3,6, 12), 
+                     labels = c("3PP", "6PP", "12PP"))
+```
+
+## Scatterplots 
+```{r}
+ggplot(df_scaled, aes(x = beq_cmc, y = BDI, color = factor(parent))) +
+  geom_jitter() +
+  geom_smooth(method = "lm", se = F) + 
+  facet_grid(~time)
+```
+
+## Box Plots
+```{r}
+ggstatsplot::grouped_ggbetweenstats(data = df_scaled, 
+               x = time,
+               y = BDI,
+               grouping.var = parent,
+               outlier.tagging = T,
+               outlier.label = CoupID,
+               centrality.point.args = list(size = 4),
+               plot.type = "box",
+               results.subtitle = F,
+               pairwise.comparisons = F,
+               annotation.args = list(title = ""),
+               ylab = "", xlab = ""
+                 )
+               
+```
+
+# Models
+
+## Random Slope Tests
+```{r message=FALSE}
+m01 <- lmer(log_BDI ~ 1 + (time|CoupID/PersonID), data = df_scaled, control = lmerControl(optimizer = "nmkbw")) 
+m02 <- lmer(log_BDI ~ 1 + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled, control = lmerControl(optimizer = "nmkbw")) 
+ranova(m01) #coup -> significant, person nonsignificant -> did not converge so test again without random slope on Person but random intercept
+ranova(m02) #signficiant and converges!
+```
+
+## Basic Models
+```{r}
+# Raw BDI
+m1 <- glmmTMB(BDI ~ beq_cmc + time*DelMeth*beq_cm + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled)
+summary(m1)
+
+# Log-Transformed BDI, include both random slopes for convergence! Remove the 3way interaction!
+m2 <- glmmTMB(log_BDI ~ beq_cmc + time*beq_cm + beq_cm*DelMeth + time*DelMeth + (time|CoupID/PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m2)
+
+# Log-Transformed BDI without 3way time interaction, does not converge with random slope, so take out!
+m3 <- glmmTMB(log_BDI ~ beq_cmc + time*DelMeth + time*beq_cm + DelMeth*beq_cm + (time|CoupID/PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m3)
+
+# Log-Transformed BDI without time interaction, does not converge with random slope, so take out!
+m3.5 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (1|CoupID/PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m3.5)
+
+# EPDS
+m4 <- glmmTMB(log_EPDS ~ beq_cmc + time*DelMeth + time*beq_cm + DelMeth*beq_cm + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m4)
+```
+Model 1 and 2 look promising:
+
+1. Delivery method predicts BDI: Delivery method 1 is associated with a significant increase in BDI
+2. Couple-level beq predicts BDI: Couple level beq (what exactly is it measuring?) is associated with a significant increase in BDI
+3. BDI is not impacted by time-since-birth
+4. There is an interaction of DelMeth and beq, with DelMeth1 reducing the influence of beq on BDI, and this interaction is stable over time!
+5. The impact of delivery method does NOT change over time
+6. The impact of couple-level beq does NOT change over time 
+7. Individual-level beq does NOT predict BDI
+
+### Covariate Models
+```{r}
+# Gender -> significant
+m4 <- glmmTMB(log_BDI ~ beq_cmc + time*beq_cm + time*DelMeth + DelMeth*beq_cm + parent + (time|CoupID/PersonID), data = df_scaled)
+summary(m4) 
+
+# I think it is better to keep all data in the dataset and account for gender, instead of filtering out!
+
+# # Gender and Prenatal Depression -> does not converge
+# m5 <- glmmTMB(log_BDI ~ beq_cmc + time*DelMeth*beq_cm + parent + pnBDI + (1|CoupID) + (1|CoupID:PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+# summary(m5)
+# 
+# # Gender, pnBDI, parent-level demographics, does not converge
+# m6 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + ethnicity + age + education + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled, control = glmmTMBControl(optimizer = optim, optArgs = list(method="Nelder-Mead")))
+# summary(m6)
+# 
+# # Gender, pnBDI, baby demographics, does not converge
+# m7 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + GestationAge + BabySex + (time|PersonID) + (1|CoupID), data = df_scaled)
+# summary(m7)
+
+#Models do not converge -> use bayesian models below instead!!
+```
+
+## Interaction Plot
+```{r}
+interactions::interact_plot(m4, 
+              pred = "beq_cm",
+              modx = "DelMeth",
+              plot.points = TRUE, 
+              point.size = 0.5, 
+              point.alpha = 0.2, 
+              facet.modx = FALSE)
+```
+
+### Bayesian
+
+```{r}
+# Model 4 as bayesian
+m4_robust <- brm(
+  log_BDI ~ beq_cmc + time*DelMeth + beq_cm*DelMeth + time*beq_cm + parent + (time|CoupID/PersonID),
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+summary(m4_robust)
+```
+Significant:
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *beq_cm: increases BDI
+  *parent: Mom increases BDI compared to dad
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+  
+```{r}
+# m4 including baby demographics
+m5_robust <- brm(
+  log_BDI ~ beq_cmc + time*DelMeth + beq_cm*DelMeth + time*beq_cm + parent + pnBDI + GestationAge + BabySex + (time|CoupID/PersonID),
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+summary(m5_robust)
+```
+
+Significant:
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *pnBDI: increases BDI (slightly?)
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+  
+```{r}
+# m4 including parent demographics
+m6_robust <- brm(
+  log_BDI ~ beq_cmc + time*DelMeth + time*beq_cm + DelMeth*beq_cm + parent + pnBDI + ethnicity + age + education + (time|CoupID/PersonID),
+    # Assume random effects follow a t distribution
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+summary(m6_robust)
+```
+
+Significant:
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+
+```{r}
+# m4 including all covariates
+m7_robust <- brm(
+  log_BDI ~ beq_cmc + time*DelMeth + time*beq_cm + DelMeth*beq_cm + parent + GestationAge + pnBDI + ethnicity + age + education + BabySex + (time|CoupID/PersonID),
+    # Assume random effects follow a t distribution
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+summary(m7_robust)
+```
+
+Significant:
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *pnBDI: increases BDI
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+
+
+## Model Equation:
+Nomenclature:  
+
+* k: Couples
+* j: persons
+* i: time intervals
+
+### Level 1: Time
+
+$$\text{logBDI}_{ijk} = \beta_{0jk} + \beta_{1jk} \text{time}_{ijk} + e_{ijk}$$
+
+### Level 2: Person
+
+$$
+  \begin{aligned}
+    \beta_{0jk} & = \gamma_{00k} + \gamma_{01k}\text{BEQ_cmc}_{jk} + \gamma_{02k}\text{gender}_{jk} + \gamma_{03k}\text{pnBDI}_{jk}  + u_{0jk}\\
+    \beta_{1jk} & = \gamma_{10k} + u_{1jk}
+  \end{aligned}
+$$
+
+### Level 3: Couple 
+$$
+  \begin{aligned}
+    \gamma_{00k} & = \gamma_{000} + \gamma_{001}\text{DelMeth}_k + \gamma_{002}\text{BEQ_cm}_k + \gamma_{003}\text{DelMeth}_k\times\text{BEQ_cm}_k  \\
+    \gamma_{01k} & = \gamma_{010} \\
+    \gamma_{02k} & = \gamma_{020} \\
+    \gamma_{03k} & = \gamma_{030} \\
+    \gamma_{10k} & = \gamma_{100} 
+  \end{aligned}
+$$
+
+### Combined
+$$
+  \begin{aligned}
+    \text{logBDI}_{ijk} & = \gamma_{000} + \gamma_{001}\text{DelMeth}_k + \gamma_{002}\text{BEQ_cm}_k + \gamma_{003}\text{DelMeth}_k\times\text{BEQ_cm}_k \\
+    & + \gamma_{010}\text{BEQ_cmc}_{jk} + \gamma_{020}\text{gender}_{jk} + \gamma_{030}\text{pnBDI}_{jk}\\
+    &+ \gamma_{100}\text{time}_{ijk} \\
+    &+  u_{1jk}\text{time}_{ijk} + u_{0jk} + e_{ijk}
+  \end{aligned}
+$$
+
+# Tables
+## Predictor Names -> needs to be adjusted to the chosen models!
+```{r include=FALSE}
+names <- c(
+  '(Intercept)' = "Intercept",
+  'time' = "Time Since Birth",
+  'beq_cmc' = "Person-Level Birth Stress",
+  'beq_cm' = "Couple-Centered Birth Stress",
+  'DelMeth1' = "Delivery Method (C-Section)",
+  'DelMeth1:beq_cm' = "C-Section X Couple-Center Birth Stress",
+  'parentmom' = "Gender (Female)",
+  'pnBDI' = "Prenatal Depression",
+  'time:beq_cm' = "Time Since Birth X Couple-Center Birth Stress",
+  'time:DelMeth1' = "Time Since Birth X C-Section",
+  'time:DelMeth1:beq_cm' = "Time Since Birth X C-Section X Couple-Center Birth Stress"
+)
+
+order <- c(
+  '(Intercept)',
+  'time',
+  'beq_cmc',
+  'beq_cm',
+  'DelMeth1',
+  'DelMeth1:beq_cm',
+  'time:DelMeth1',
+  'time:beq_cm',
+  'time:DelMeth1:beq_cm',
+  'parentmom',
+  'pnBDI'
+)
+```
+
+## msummary
+```{r eval=FALSE, message=FALSE, include=FALSE}
+msummary(list("3-Way Interaction Model" = m2,
+              "2-Way Interaction Model" = m3,
+              "Covariate Model"= m5),
+         group = group + term ~ model,
+         fmt = 2,
+         title = "Table 1",
+         coef_rename = names,
+         estimate = "{estimate} [{conf.low}, {conf.high}] {stars}",
+         statistic = NULL,
+         stars = TRUE,
+         output = "kableExtra",
+         add_rows = new_rows)
+
+new_rows <- data.frame(
+  term = c("Fixed effects", "Random effects", "Goodness of Fit"),
+  m2 = c("", "", ""),
+  m3 = c("", "", ""),
+  m5 = c("", "", ""),
+  m0 = c("", "", "")
+)
+
+attr(new_rows, "position") <- c(1, 13, 19)
+
+# Step 1. Create a map for the predictors and the terms in the model.
+# Need to use '\\( \\)' to show math.
+# Rename and reorder the rows. Need to use '\\( \\)' to
+# show math. If this does not work for you, don't worry about it.
+cm <- c(names,
+        "PersonID_sd__(Intercept)" = "\\(\\tau_0\\)",
+        "sd__time" = "\\(\\tau_1\\) (time)",
+        "sd__Observation" = "\\(\\sigma\\)")
+# Step 2. Create a list of models to have one column for coef, 
+# one for SE, one for CI, and one for p
+models <- list(
+  "Estimate" = m2,
+  "95% CI" = m2,
+)
+# Step 3. Add rows to say fixed and random effects
+# (Need same number of columns as the table)
+new_rows <- data.frame(
+  term = c("Fixed effects", "Random effects"),
+  est = c("", ""),
+  ci = c("", "")
+)
+# Specify which rows to add
+attr(new_rows, "position") <- c(1, 11)
+# Step 4. Render the table
+msummary(models,
+         estimate = c("estimate", 
+                      "[{conf.low}, {conf.high}]"),
+         stars = T,
+         statistic = NULL, 
+         coef_map = cm,
+         add_rows = new_rows)
+```
+
+## sjPlot
+```{r}
+sjPlot::tab_model(m2, m3, m5,
+                  dv.labels = c("3-Way Interaction Model", "2-Way Interaction Model", "Covariate Model"),
+                  show.aic = T,
+                  show.loglik = T,
+                  string.ci = "95% CI",
+                  pred.labels = names)
+```
+
