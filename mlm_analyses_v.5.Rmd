@@ -1,0 +1,408 @@
+---
+title: '575 Final Project: Data Analysis'
+author: "Lizzie, Suhaib, Emma"
+date: "`r Sys.Date()`"
+output:
+  bookdown::html_document2:
+    html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(tinytex.verbose = TRUE)
+```
+
+# Load packages
+```{r load-pkg, message=FALSE}
+library(tidyverse)
+library(haven)
+library(ggplot2)
+library(here)
+library(jtools)
+library(lme4)
+library(lmerTest)
+library(glmmTMB)
+library(modelsummary)
+library(knitr)
+library(kableExtra)
+library(brms)
+library(gtsummary)
+theme_set(jtools::theme_apa())
+uscred <- "#990000"
+uscgold <- "#ffcc00"
+```
+
+# Load Data
+## Import Data
+```{r data-import, message=FALSE}
+df.hatch <- read_sav(here("HATCH 09.29.21.sav")) # original .sav file
+df_scaled <- read_sav(here("df_scaled.sav")) # tidied data from `mlm_datacleaning.rmd`
+```
+
+# Testing
+## ICC
+```{r}
+m0 <- lmer(log_BDI ~ 1 + (1|CoupID/PersonID), data = df_scaled)
+variance_components <- as.data.frame(VarCorr(m0))
+between_var <- variance_components$vcov[1]
+within_var <- variance_components$vcov[2]
+(icc <- between_var / (between_var + within_var))
+```
+
+## Random Slope Tests
+```{r rnd-slp}
+m01 <- lmer(log_BDI ~ 1 + (time|CoupID/PersonID), data = df_scaled, control = lmerControl(optimizer = "nmkbw")) 
+m02 <- lmer(log_BDI ~ 1 + (time|CoupID) + (1|CoupID:PersonID), data = df_scaled, control = lmerControl(optimizer = "nmkbw")) 
+ranova(m01) #coup -> significant, person nonsignificant -> did not converge so test again without random slope on Person but random intercept
+ranova(m02) #significant and converges!
+```
+
+# Models 
+## Basic Models
+```{r model-basics}
+# 3 Way Interaction
+m1 <- glmmTMB(log_BDI ~ beq_cmc + time*beq_cm*DelMeth + (time|CoupID) + (1|CoupID:PersonID), 
+              data = df_scaled, 
+              control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m1)
+
+# 2 Way Interaction
+m2 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (time|CoupID) + (1|CoupID:PersonID), 
+              data = df_scaled, 
+              control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m2)
+```
+
+
+1. Delivery method predicts BDI: Delivery method 1 is associated with a significant increase in BDI
+2. Couple-level beq predicts BDI: Couple level beq (what exactly is it measuring?) is associated with a significant increase in BDI
+3. BDI *may* not be impacted by time-since-birth
+4. There is an interaction of DelMeth and beq, with DelMeth1 reducing the influence of beq on BDI, and this interaction is stable over time
+5. The impact of delivery method does NOT change over time
+6. The impact of couple-level beq does NOT change over time 
+7. Individual-level beq does NOT predict BDI
+
+## Covariate Models
+```{r}
+# Relevant Covariates
+m3 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + (time|CoupID) + (1|CoupID:PersonID),
+              data = df_scaled, 
+              control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m3)
+
+# Demographics Covariates
+m4 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + GestationAge + BabySex + education + ethnicity + (time|CoupID) + (1|CoupID:PersonID), 
+              data = df_scaled, 
+              control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m4)
+
+# Models do not converge -> use bayesian models below instead!!
+```
+
+## Bayesian Models 
+### Run Models
+```{r model-bayesian-run, eval=FALSE, include=FALSE}
+# Model 1 as bayesian
+m1_robust <- brm(
+  log_BDI ~ beq_cmc + time*beq_cm*DelMeth + (time|CoupID:PersonID), # includes random slopes for both; m1 only included random slopes for couple
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+
+save(m1_robust, file = here("m1_robust.Rdata"))
+
+# Model 2 as bayesian
+m2_robust <- brm(
+  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (time|CoupID/PersonID),
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+
+save(m2_robust, file = here("m2_robust.Rdata"))
+
+# M3 as Bayesian
+m3_robust <- brm(
+  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + (time|CoupID/PersonID),
+    # Assume random effects follow a t distribution
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+
+save(m3_robust, file = here("m3_robust.Rdata"))
+
+# M4 as Bayesian
+m4_robust <- brm(
+  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + GestationAge + BabySex + education + ethnicity + (time|CoupID/PersonID),
+    # Assume random effects follow a t distribution
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+
+save(m4_robust, file = here("m4_robust.Rdata"))
+```
+
+### Interpret Models
+#### Three-Way Interaction
+```{r m1-bayes}
+load(here("m1_robust.Rdata"))
+summary(m1_robust)
+```
+Significant:
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *beq_cm: increases BDI
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+  
+#### Two-Way Interaction
+```{r m2-bayes}
+load(here("m2_robust.Rdata"))
+summary(m2_robust)
+```
+Significant:
+  *time: reduction of BDI over time
+  *beq_cm: increases BDI
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+
+#### Two-Way Interaction with Relevant Covariates
+```{r m3-bayes}
+load(here("m3_robust.Rdata"))
+summary(m3_robust)
+```
+Significant:
+  *time: reduction of BDI
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *beq_cm: increases BDI
+  *pnBDI: increases BDI
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+
+#### Two-Way Interaction with Demographic Covariates
+```{r m4-bayes}
+load(here("m4_robust.Rdata"))
+summary(m4_robust)
+```
+Significant:
+  *time: reduces BDI
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *beq_cm: increases BDI
+  *pnBDI: increases BDI
+  *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+
+
+# Model Equations for Model 3:
+
+Nomenclature:  
+
+* k: Couples
+* j: persons
+* i: time intervals
+
+## Level 1: Time
+
+$$\text{logBDI}_{ijk} = \beta_{0jk} + \beta_{1jk} \text{time}_{ijk} + e_{ijk}$$
+
+## Level 2: Person
+
+$$
+  \begin{aligned}
+    \beta_{0jk} & = \gamma_{00k} + \gamma_{01k}\text{BEQ_cmc}_{jk} + \gamma_{02k}\text{gender}_{jk} + \gamma_{03k}\text{pnBDI}_{jk}  + u_{0jk}\\
+    \beta_{1jk} & = \gamma_{10k} + u_{1jk}
+  \end{aligned}
+$$
+## Level 3: Couple 
+$$
+  \begin{aligned}
+    \gamma_{00k} & = \gamma_{000} + \gamma_{001}\text{DelMeth}_k + \gamma_{002}\text{BEQ_cm}_k + \gamma_{003}\text{DelMeth}_k\times\text{BEQ_cm}_k + v_{00k} \\
+    \gamma_{01k} & = \gamma_{010}  + v_{01k}\\
+    \gamma_{02k} & = \gamma_{020}  + v_{02k}\\
+    \gamma_{03k} & = \gamma_{030}  + v_{03k}\\
+    \gamma_{10k} & = \gamma_{100}  + v_{10k}
+  \end{aligned}
+$$
+
+
+# Tables
+## Demographics
+```{r}
+t1 <- df_scaled %>%
+  group_by(PersonID) %>% mutate(bdi_mean = mean(BDI, na.rm = T)) %>% ungroup() %>%
+  distinct(PersonID, .keep_all = T) %>%
+  mutate(ethnicity = factor(x = ethnicity, levels = c(1:7), labels = c("White", "Black", "Hispanic/LatinX", "American Indian/Alaska Native", "AAPI", "Other", "Declined"))) %>% 
+  mutate(education = factor(x = education, levels = c(1:6), labels = c("High School/GED", "Some College", "Associate's Degree", "Bachelor's Degree", "Master's Degree", "Professional/Doctoral Degree"))) %>%
+  select(age, beq, pnBDI, bdi_mean, ethnicity, education, parent) %>%
+  tbl_summary(statistic = all_continuous() ~ "{mean} ({sd})",
+              missing = "no", 
+              by = parent,
+              label = list(age ~ "Parent Age", 
+                           beq ~ "BEQ",
+                           pnBDI ~ "Prenatal BDI",
+                           bdi_mean ~ "Postpartum BDI",
+                           ethnicity ~ "Ethnicity",
+                           education ~ "Education")) %>%
+  add_overall() %>%
+  italicize_levels() %>%
+  modify_header(list(stat_0 ~ "**All Parents**", 
+                     stat_1 ~ "**Fathers**",
+                     stat_2 ~ "**Mothers**"))
+
+t2 <- df_scaled %>%
+  distinct(CoupID, .keep_all = T) %>%
+  mutate(BabySex = factor(x = BabySex, levels = c(0, 1), labels = c("Female", "Male"))) %>%
+  mutate(DelMeth = factor(x = DelMeth, levels = c(1,2), labels = c("Vaginal", "C-Section"))) %>%
+  select(GestationAge, BabySex, DelMeth) %>%
+  tbl_summary(statistic = all_continuous() ~ "{mean} ({sd})", 
+              missing = "no") %>%
+  italicize_levels()
+
+tbl_stack(list(t1, t2)) %>%
+  as_kable_extra(caption = "Table 1. Demographics") %>% 
+  kable_classic(full_width = F) %>%
+  pack_rows("Level 2", 1, 19) %>%
+  pack_rows("Level 3", 20, 26)
+
+## Missing Values
+map(distinct(df_scaled, CoupID, .keep_all = T), ~sum(is.na(.)))
+map(filter(df_scaled, time == 12), ~sum(is.na(.)))
+
+```
+
+# Plots
+## Density Plots
+```{r plot-density, message=FALSE}
+
+df_scaled <- df_scaled %>%
+  mutate(time2 = factor(time, levels = c(3, 6, 12), labels = c("3 PP", "6 PP", "12 PP")))
+
+# BDI Density
+f1 <- ggplot(data = df_scaled, aes(x = BDI, fill=as.factor(parent))) +
+  geom_density(alpha=0.6, show.legend = FALSE) +
+  facet_grid(.~time2, scales = "free", space='free') +
+  scale_fill_manual(values=c(uscred, uscgold)) +
+  labs(x = "Depression (BDI)", y = "",
+       title = "Figure 1", subtitle = "Distribution of BDI")
+
+f2 <- ggplot(data = df_scaled, aes(x = log_BDI, fill=as.factor(parent))) +
+  geom_density(alpha=0.6) +
+  facet_grid(.~time2) +
+  scale_fill_manual(labels = c("Dad", "Mom"), values=c(uscred, uscgold)) + 
+  labs(x = "Log-Transformed Depression (BDI)", y = "",
+       title = "Figure 2", subtitle = "Distribution of Log-Transformed BDI")
+
+gridExtra::grid.arrange(f1, f2, ncol = 2)
+
+# BEQ
+ggplot(data = df_scaled, aes(x = beq, fill = as.factor(parent))) + 
+  geom_density(alpha = 0.6) +
+  scale_fill_manual(labels = c("Dad", "Mom"), values=c(uscred, uscgold)) + 
+  labs(x = "Birthing Stress (BEQ)", y = "",
+       title = "Figure 3", subtitle = "Distribution of BEQ") 
+
+```
+
+
+## Bar Plot
+```{r plot-bar}
+# Delivery Method Without Missing Data
+ggplot(data = distinct(na.omit(df_scaled), CoupID, .keep_all = T), 
+       aes(x = as.factor(DelMeth), 
+           fill = as.factor(DelMeth.Specific))) + 
+  geom_bar(position = "stack", color = "black") + 
+  scale_x_discrete(labels = c("Vaginal", "C-Section")) + 
+  scale_fill_discrete(labels = c("Natural Vaginal", "Medicated Vaginal", "Unplanned C-Section", "Planned C-Section")) +
+  labs(x = "Delivery Method", y = "",
+       title = "Figure 4", subtitle = "Types of Delivery")
+```
+
+## Spaghetti Plot
+```{r}
+df_scaled <- df_scaled %>%
+  mutate(parent2 = factor(parent, levels = c(1:2), labels = c("Fathers", "Mothers")))
+
+ggplot(df_scaled, aes(x = time, y = BDI, color = factor(CoupID))) + 
+  geom_jitter(size = 0.5, alpha = 0.2, width = 0.1, height = 0.1) + 
+  geom_line(aes(group = PersonID)) +  # add lines to connect the data for each person
+  # add a mean trajectory
+  stat_summary(fun = "mean", col = "black", size = 1.5, geom = "line") + 
+  facet_wrap(~parent2) + 
+   # Suppress legend
+  guides(color = "none", fill = "none") +
+  # Labels
+  labs(title = "Figure 5", subtitle = "Change in Depression Levels", 
+       x = "", y = "BDI") + 
+  # Remove Label
+  scale_x_continuous(breaks = c(3,6, 12), 
+                     labels = c("3PP", "6PP", "12PP")) 
+
+```
+
+## Scatterplots 
+```{r}
+ggplot(df_scaled, aes(x = beq_cmc, y = BDI, color = factor(parent))) +
+  geom_jitter(alpha = 0.6) +
+  geom_smooth(method = "lm", se = F) + 
+  facet_grid(~time2) +   
+  scale_color_manual(labels = c("Dad", "Mom"), values=c(uscred, uscgold)) + 
+  labs(title = "Figure 6", subtitle = "Depression ~ Person-Level Birth Stress", 
+       x = "Person-Level Birth Stress", y = "BDI")
+
+```
+
+## Interaction Plot
+```{r}
+df_csv <- df_scaled %>%
+  mutate(DelMeth = factor(DelMeth, levels = c(1:2), labels = c("0", "1")))
+
+m_interact <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (time|CoupID) + (1|CoupID:PersonID), 
+              data = df_csv, 
+              control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+
+interactions::interact_plot(m_interact, 
+              pred = "beq_cm",
+              modx = "DelMeth",
+              plot.points = TRUE, 
+              point.size = 0.5, 
+              point.alpha = 0.2, 
+              facet.modx = FALSE,
+              x.label = "Couple-Level Subjective Birth Stress",
+              y.label = "Log-Tranformed BDI",
+              legend.main = "Delivery Method",
+              modx.labels = c("Vaginal", "C-Section"),
+              main.title = "Figure 7 
+Interaction Plot")
+
+m_future <- glmmTMB(log_BDI ~ beq_cm + time + DelMeth*beq_cmc*parent + (time|CoupID) + (1|CoupID:PersonID), 
+              data = df_csv, 
+              control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+
+interactions::interact_plot(m_future, 
+              pred = "beq_cmc",
+              modx = "DelMeth",
+              mod2 = "parent",
+              plot.points = TRUE, 
+              point.size = 0.5, 
+              point.alpha = 0.2, 
+              facet.modx = FALSE, 
+              x.label = "Individual-Level Subjective Birth Stress",
+              y.label = "Log-Tranformed BDI",
+              legend.main = "Delivery Method",
+              modx.labels = c("Vaginal", "C-Section"),
+              mod2.labels = c("Father", "Mother"),
+              main.title = "Figure 8 
+Future Directions")
+```

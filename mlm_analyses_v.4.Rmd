@@ -213,7 +213,7 @@ interactions::interact_plot(m4,
               facet.modx = FALSE)
 ```
 
-### Bayesian
+# Bayesian
 
 ```{r}
 # Model 4 as bayesian, remove time interactions? below is a version without!
