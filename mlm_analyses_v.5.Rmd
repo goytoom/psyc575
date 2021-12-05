@@ -267,13 +267,6 @@ $$
   \end{aligned}
 $$
 
-<!--     \gamma_{01k} & = \gamma_{010}  + v_{01k}\\ -->
-<!--     \gamma_{02k} & = \gamma_{020}  + v_{02k}\\ -->
-<!--     \gamma_{03k} & = \gamma_{030}  + v_{03k}\\ -->
-
-<!-- What is \gamma_{01k} expressing? We don't have random slopes for any predictor but time!!! -->
-
-
 # Tables
 ## Demographics
 ```{r}
