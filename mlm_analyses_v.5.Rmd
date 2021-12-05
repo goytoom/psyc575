@@ -207,17 +207,17 @@ Significant:
 
 # Model Equations for Model 3:
 
-Nomenclature:  
+**Nomenclature:**  
 
 * k: Couples
 * j: persons
 * i: time intervals
 
-## Level 1: Time
+**Level 1: Time**
 
 $$\text{logBDI}_{ijk} = \beta_{0jk} + \beta_{1jk} \text{time}_{ijk} + e_{ijk}$$
 
-## Level 2: Person
+**Level 2: Person**
 
 $$
   \begin{aligned}
@@ -225,7 +225,8 @@ $$
     \beta_{1jk} & = \gamma_{10k} + u_{1jk}
   \end{aligned}
 $$
-## Level 3: Couple 
+**Level 3: Couple** 
+
 $$
   \begin{aligned}
     \gamma_{00k} & = \gamma_{000} + \gamma_{001}\text{DelMeth}_k + \gamma_{002}\text{BEQ_cm}_k + \gamma_{003}\text{DelMeth}_k\times\text{BEQ_cm}_k + v_{00k} \\
