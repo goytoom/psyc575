@@ -43,7 +43,7 @@ df_scaled <- read_sav(here("df_scaled.sav")) # tidied data from `mlm_datacleanin
 # Testing
 ## ICC
 ```{r}
-m0 <- lmer(log_BDI ~ 1 + (1|CoupID/PersonID), data = df_scaled)
+m0 <- lmer(beq ~ 1 + (1|CoupID/PersonID), data = df_scaled)
 variance_components <- as.data.frame(VarCorr(m0))
 between_var <- variance_components$vcov[1]
 within_var <- variance_components$vcov[2]
