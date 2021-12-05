@@ -354,14 +354,23 @@ ggplot(df_scaled, aes(x = time, y = BDI, color = factor(CoupID))) +
 
 ## Scatterplots 
 ```{r}
-ggplot(df_scaled, aes(x = beq_cmc, y = BDI, color = factor(parent))) +
-  geom_jitter(alpha = 0.6) +
-  geom_smooth(method = "lm", se = F) + 
-  facet_grid(~time2) +   
-  scale_color_manual(labels = c("Dad", "Mom"), values=c(uscred, uscgold)) + 
+f6 <- ggplot(df_scaled, aes(x = beq_cmc, y = log_BDI)) +
+  geom_jitter(alpha = 0.3, color = uscgold) +
+  geom_smooth(method = "lm", se = F, color = uscred) + 
+  facet_grid(~time2) +
   labs(title = "Figure 6", subtitle = "Depression ~ Person-Level Birth Stress", 
-       x = "Person-Level Birth Stress", y = "BDI")
+       x = "Person-Level Birth Stress", y = "Log-Transformed BDI")
 
+
+f7 <- ggplot(df_scaled, aes(x = beq_cm, y = log_BDI)) +
+  geom_jitter(alpha = 0.3, color = uscgold) +
+  geom_smooth(method = "lm", se = F, color = uscred) + 
+  facet_grid(~time2) +   
+  labs(title = "Figure 7", subtitle = "Depression ~ Couple-Level Birth Stress", 
+       x = "Couple-Level Birth Stress", y = "Log-Transformed BDI")
+
+
+gridExtra::grid.arrange(f6, f7, nrow = 2)
 ```
 
 ## Interaction Plot
@@ -384,7 +393,7 @@ interactions::interact_plot(m_interact,
               y.label = "Log-Tranformed BDI",
               legend.main = "Delivery Method",
               modx.labels = c("Vaginal", "C-Section"),
-              main.title = "Figure 7 
+              main.title = "Figure 8 
 Interaction Plot")
 
 m_future <- glmmTMB(log_BDI ~ beq_cm + time + DelMeth*beq_cmc*parent + (time|CoupID) + (1|CoupID:PersonID), 
