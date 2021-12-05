@@ -148,20 +148,24 @@ df.long <- left_join(df.long1, df.long2, by = c("CoupID", "parent", "time")) %>%
 
 ## Data Processing
 ```{r, message=FALSE}
-#scaling and decomposing of variables
+#transforming and decomposing of variables
 df_scaled <- df.long %>% 
   mutate(log_BDI = log(BDI+1)) %>%
   mutate(log_pnBDI = log(pnBDI+1)) %>%
   mutate(DelMeth = as.factor(DelMeth)) %>%
+  mutate(DelMeth.Specific = as.factor(DelMeth.Specific)) %>%
   mutate(log_EPDS = log(EPDS+1)) %>%
   mutate(parent = as.factor(parent)) %>%
-  group_by(CoupID) %>% mutate(beq_cm = mean(beq)) %>% ungroup() %>% mutate(beq_cmc = beq - beq_cm, beq_st = scale(beq), beq_stc = scale(beq_cmc)) 
+  mutate(BabySex = as.factor(BabySex)) %>%
+  mutate(ethnicity = as.factor(ethnicity)) %>%
+  mutate(education = as.factor(education)) %>%
+  group_by(CoupID) %>% mutate(beq_cm = mean(beq)) %>% ungroup() %>% mutate(beq_cmc = beq - beq_cm)
   
 ```
 
 ## Save Data
 ```{r}
-write_sav(df_scaled, here("../df_scaled.sav"))
+saveRDS(df_scaled, file = "df_scaled.rds")
 ```
 
 

@@ -36,18 +36,33 @@ uscgold <- "#ffcc00"
 # Load Data
 ## Import Data
 ```{r data-import, message=FALSE}
-df.hatch <- read_sav(here("HATCH 09.29.21.sav")) # original .sav file
-df_scaled <- read_sav(here("df_scaled.sav")) # tidied data from `mlm_datacleaning.rmd`
+df_scaled <- readRDS("df_scaled.rds") #cleaned and scaled dataframe from mlm_datacleaning.Rmd
 ```
 
 # Testing
 ## ICC
 ```{r}
-m0 <- lmer(beq ~ 1 + (1|CoupID/PersonID), data = df_scaled) # i know this doesn't converge but I think for the current assignment, that's fine and not worth fixing
-variance_components <- as.data.frame(VarCorr(m0))
-between_var <- variance_components$vcov[1]
-within_var <- variance_components$vcov[2]
-(icc <- between_var / (between_var + within_var))
+#For log(BDI)
+m_icc_0 <- lmer(log_BDI ~ 1 + (1|CoupID/PersonID), data = df_scaled)
+variance_components <- as.data.frame(VarCorr(m_icc_0))
+between_couple <- variance_components$vcov[1]
+between_person <- variance_components$vcov[2]
+within_person <- variance_components$vcov[3]
+(icc_couple <- between_couple / (between_couple + between_person + within_person))
+(icc_person <- (within_person + between_couple) / (between_couple + between_person + within_person))
+
+#34% of BDI variance on level 2 is explained by persons compared to within-person (time-series values) variance
+#86% of BDI variance on level 3 is explained by couples compared to within-couple (person values) variance
+```
+
+
+```{r}
+#For BEQ, but usually we want to show the ICC for our outcome and not predictor to justify using a MLM instead of regular regression
+m_icc_1 <- lmer(beq ~ 1 + (1|CoupID), data = df_scaled)
+variance_components <- as.data.frame(VarCorr(m_icc_1))
+between_couple <- variance_components$vcov[1]
+within_couple <- variance_components$vcov[2]
+(icc_couple_beq <- between_couple / (between_couple + within_couple))
 ```
 
 ## Random Slope Tests
@@ -62,19 +77,19 @@ ranova(m02) #significant and converges!
 ## Basic Models
 ```{r model-basics}
 # 3 Way Interaction
-m1 <- glmmTMB(log_BDI ~ beq_cmc + time*beq_cm*DelMeth + (time|CoupID) + (1|CoupID:PersonID), 
+m4 <- glmmTMB(log_BDI ~ beq_cmc + time*beq_cm*DelMeth + (time|CoupID) + (1|CoupID:PersonID), 
+              data = df_scaled, 
+              control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m4)
+
+# 2 Way Interaction
+m1 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (time|CoupID) + (1|CoupID:PersonID), 
               data = df_scaled, 
               control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
 summary(m1)
-
-# 2 Way Interaction
-m2 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (time|CoupID) + (1|CoupID:PersonID), 
-              data = df_scaled, 
-              control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
-summary(m2)
 ```
 
-
+<!-- We should not use this for inferences though, since these models did not converge! -->
 1. Delivery method predicts BDI: Delivery method 1 is associated with a significant increase in BDI
 2. Couple-level beq predicts BDI: Couple level beq (what exactly is it measuring?) is associated with a significant increase in BDI
 3. BDI *may* not be impacted by time-since-birth
@@ -86,16 +101,16 @@ summary(m2)
 ## Covariate Models
 ```{r}
 # Relevant Covariates
-m3 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + (time|CoupID) + (1|CoupID:PersonID),
+m2 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + (time|CoupID) + (1|CoupID:PersonID),
+              data = df_scaled, 
+              control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+summary(m2)
+
+# Demographics Covariates
+m3 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + GestationAge + BabySex + education + ethnicity + (time|CoupID) + (1|CoupID:PersonID), 
               data = df_scaled, 
               control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
 summary(m3)
-
-# Demographics Covariates
-m4 <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + GestationAge + BabySex + education + ethnicity + (time|CoupID) + (1|CoupID:PersonID), 
-              data = df_scaled, 
-              control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
-summary(m4)
 
 # Models do not converge -> use bayesian models below instead!!
 ```
@@ -103,9 +118,22 @@ summary(m4)
 ## Bayesian Models 
 ### Run Models
 ```{r model-bayesian-run, eval=FALSE, include=FALSE}
+# Model 4 as bayesian
+m4_robust <- brm(
+  log_BDI ~ beq_cmc + time*beq_cm*DelMeth + (time|CoupID/PersonID), # I would include it for all, m4 did not have it but it also did not converge (in fact the m0 model to test this slope did not converge)
+  # Assume the errors follow a t distribution
+  family = student(),
+  data = df_scaled,
+  chains = 2,
+  iter = 4000,
+  control = list(adapt_delta = .95)
+)
+
+save(m4_robust, file = here("m4_robust.Rdata"))
+
 # Model 1 as bayesian
 m1_robust <- brm(
-  log_BDI ~ beq_cmc + time*beq_cm*DelMeth + (time|CoupID:PersonID), # includes random slopes for both; m1 only included random slopes for couple
+  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (time|CoupID/PersonID),
   # Assume the errors follow a t distribution
   family = student(),
   data = df_scaled,
@@ -116,9 +144,10 @@ m1_robust <- brm(
 
 save(m1_robust, file = here("m1_robust.Rdata"))
 
-# Model 2 as bayesian
+# M2 as Bayesian
 m2_robust <- brm(
-  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (time|CoupID/PersonID),
+  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + (time|CoupID/PersonID),
+    # Assume random effects follow a t distribution
   # Assume the errors follow a t distribution
   family = student(),
   data = df_scaled,
@@ -131,20 +160,6 @@ save(m2_robust, file = here("m2_robust.Rdata"))
 
 # M3 as Bayesian
 m3_robust <- brm(
-  log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + (time|CoupID/PersonID),
-    # Assume random effects follow a t distribution
-  # Assume the errors follow a t distribution
-  family = student(),
-  data = df_scaled,
-  chains = 2,
-  iter = 4000,
-  control = list(adapt_delta = .95)
-)
-
-save(m3_robust, file = here("m3_robust.Rdata"))
-
-# M4 as Bayesian
-m4_robust <- brm(
   log_BDI ~ beq_cmc + time + DelMeth*beq_cm + parent + pnBDI + GestationAge + BabySex + education + ethnicity + (time|CoupID/PersonID),
     # Assume random effects follow a t distribution
   # Assume the errors follow a t distribution
@@ -155,54 +170,71 @@ m4_robust <- brm(
   control = list(adapt_delta = .95)
 )
 
-save(m4_robust, file = here("m4_robust.Rdata"))
+save(m3_robust, file = here("m3_robust.Rdata"))
 ```
 
 ### Interpret Models
-#### Three-Way Interaction
+#### Two-Way Interaction (Base Model)
 ```{r m1-bayes}
 load(here("m1_robust.Rdata"))
 summary(m1_robust)
+bayes_R2(m1_robust)
 ```
+
 Significant:
+  *time: reduction of BDI
   *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
   *beq_cm: increases BDI
   *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
   
-#### Two-Way Interaction
+#### Two-Way Interaction with Demographic Covariates
 ```{r m2-bayes}
 load(here("m2_robust.Rdata"))
 summary(m2_robust)
+bayes_R2(m2_robust)
 ```
+
 Significant:
   *time: reduction of BDI over time
-  *beq_cm: increases BDI
   *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
+  *beq_cm: increases BDI
+  *pnBDI: increases BDI
   *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
 
-#### Two-Way Interaction with Relevant Covariates
+#### Two-Way Interaction with Relevant Covariates (Final Model)
 ```{r m3-bayes}
 load(here("m3_robust.Rdata"))
 summary(m3_robust)
+bayes_R2(m3_robust)
 ```
+
 Significant:
   *time: reduction of BDI
   *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
   *beq_cm: increases BDI
   *pnBDI: increases BDI
+  *education3: reduces BDI compared to education1
   *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
 
-#### Two-Way Interaction with Demographic Covariates
+#### Three-Way Interaction
 ```{r m4-bayes}
 load(here("m4_robust.Rdata"))
 summary(m4_robust)
+bayes_R2(m4_robust)
 ```
+
 Significant:
-  *time: reduces BDI
-  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
   *beq_cm: increases BDI
-  *pnBDI: increases BDI
+  *DelMeth1: DelMeth1 increases BDI compared to DelMeth0
   *DelMeth1:beq_cm: DelMeth1 reduces the effect of beq_cm
+
+# Model Comparison
+
+```{r}
+loo(m1_robust, m4_robust)
+loo(m2_robust)
+loo(m3_robust)
+```
 
 
 # Model Equations for Model 3:
@@ -227,15 +259,19 @@ $$
 $$
 **Level 3: Couple** 
 
+
 $$
   \begin{aligned}
     \gamma_{00k} & = \gamma_{000} + \gamma_{001}\text{DelMeth}_k + \gamma_{002}\text{BEQ_cm}_k + \gamma_{003}\text{DelMeth}_k\times\text{BEQ_cm}_k + v_{00k} \\
-    \gamma_{01k} & = \gamma_{010}  + v_{01k}\\
-    \gamma_{02k} & = \gamma_{020}  + v_{02k}\\
-    \gamma_{03k} & = \gamma_{030}  + v_{03k}\\
     \gamma_{10k} & = \gamma_{100}  + v_{10k}
   \end{aligned}
 $$
+
+<!--     \gamma_{01k} & = \gamma_{010}  + v_{01k}\\ -->
+<!--     \gamma_{02k} & = \gamma_{020}  + v_{02k}\\ -->
+<!--     \gamma_{03k} & = \gamma_{030}  + v_{03k}\\ -->
+
+<!-- What is \gamma_{01k} expressing? We don't have random slopes for any predictor but time!!! -->
 
 
 # Tables
@@ -304,17 +340,23 @@ f2 <- ggplot(data = df_scaled, aes(x = log_BDI, fill=as.factor(parent))) +
   scale_fill_manual(labels = c("Dad", "Mom"), values=c(uscred, uscgold)) + 
   labs(x = "Log-Transformed Depression (BDI)", y = "",
        title = "Figure 2", subtitle = "Distribution of Log-Transformed BDI")
+```
 
-gridExtra::grid.arrange(f1, f2, ncol = 2)
+### Resize figures in markdown
+```{r fig.height=4, fig.width=16}
+gridExtra::grid.arrange(f1, f2, ncol = 2) 
+```
 
+```{r fig.height=4, fig.width=8}
 # BEQ
 ggplot(data = df_scaled, aes(x = beq, fill = as.factor(parent))) + 
   geom_density(alpha = 0.6) +
   scale_fill_manual(labels = c("Dad", "Mom"), values=c(uscred, uscgold)) + 
   labs(x = "Birthing Stress (BEQ)", y = "",
        title = "Figure 3", subtitle = "Distribution of BEQ") 
-
 ```
+
+
 
 
 ## Bar Plot
@@ -333,7 +375,7 @@ ggplot(data = distinct(na.omit(df_scaled), CoupID, .keep_all = T),
 ## Spaghetti Plot
 ```{r}
 df_scaled <- df_scaled %>%
-  mutate(parent2 = factor(parent, levels = c(1:2), labels = c("Fathers", "Mothers")))
+  mutate(parent2 = factor(parent, levels = c("dad","mom"), labels = c("Fathers", "Mothers")))
 
 ggplot(df_scaled, aes(x = time, y = BDI, color = factor(CoupID))) + 
   geom_jitter(size = 0.5, alpha = 0.2, width = 0.1, height = 0.1) + 
@@ -375,11 +417,8 @@ gridExtra::grid.arrange(f6, f7, nrow = 2)
 
 ## Interaction Plot
 ```{r}
-df_csv <- df_scaled %>%
-  mutate(DelMeth = factor(DelMeth, levels = c(1:2), labels = c("0", "1")))
-
 m_interact <- glmmTMB(log_BDI ~ beq_cmc + time + DelMeth*beq_cm + (time|CoupID) + (1|CoupID:PersonID), 
-              data = df_csv, 
+              data = df_scaled, 
               control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
 
 interactions::interact_plot(m_interact, 
@@ -397,7 +436,7 @@ interactions::interact_plot(m_interact,
 Interaction Plot")
 
 m_future <- glmmTMB(log_BDI ~ beq_cm + time + DelMeth*beq_cmc*parent + (time|CoupID) + (1|CoupID:PersonID), 
-              data = df_csv, 
+              data = df_scaled, 
               control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
 
 interactions::interact_plot(m_future, 
